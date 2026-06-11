@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Fable Player</string>
+    <string name="my_music">Моя музыка</string>
+    <string name="no_tracks">Треки не найдены</string>
+    <string name="no_results">Ничего не найдено</string>
+    <string name="empty_playlist">Плейлист пуст.\nЗажмите трек, чтобы добавить его сюда.</string>
+    <string name="no_permission">Нет доступа к музыке.\nРазрешите доступ в настройках приложения.</string>
+    <string name="unknown_artist">Неизвестный исполнитель</string>
+    <string name="nothing_playing">Выберите трек</string>
+    <string name="search_hint">Поиск</string>
+    <string name="btn_play">Воспроизвести</string>
+    <string name="btn_prev">Предыдущий</string>
+    <string name="btn_next">Следующий</string>
+    <string name="btn_repeat">Повтор</string>
+    <string name="btn_shuffle">Перемешать</string>
+    <string name="btn_collapse">Свернуть</string>
+    <string name="btn_menu">Меню</string>
+    <string name="cover">Обложка</string>
+    <string name="menu_author">Автор · Telegram @GuardionSpend</string>
+    <string name="menu_refresh">Обновить библиотеку</string>
+    <string name="menu_set_cover">Установить свою обложку</string>
+    <string name="menu_remove_cover">Убрать свою обложку</string>
+    <string name="pick_cover">Выбор обложки</string>
+    <string name="toast_cover_set">Обложка обновлена</string>
+    <string name="toast_cover_removed">Обложка удалена</string>
+    <string name="playlists">Плейлисты</string>
+    <string name="all_music">Вся музыка</string>
+    <string name="new_playlist">Создать плейлист</string>
+    <string name="playlist_name_hint">Название плейлиста</string>
+    <string name="rename">Переименовать</string>
+    <string name="delete">Удалить</string>
+    <string name="add_to_playlist">Добавить в плейлист</string>
+    <string name="remove_from_playlist">Убрать из плейлиста</string>
+    <string name="toast_added">Добавлено</string>
+    <string name="stat_listened">Прослушано</string>
+    <string name="stat_fav">Любимый трек</string>
+    <string name="stat_tracks">В библиотеке</string>
+    <string name="dev">Разработчик</string>
+    <string name="dev_link">github.com/GuardionSpend</string>
+    <string name="contributor">Контрибьютор</string>
+    <string name="contributor_link">github.com/NickIBrody</string>
+</resources>
