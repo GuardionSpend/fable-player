@@ -4,9 +4,16 @@ import android.Manifest;
 import android.animation.ArgbEvaluator;
 import android.animation.ValueAnimator;
 import android.app.Activity;
-import android.app.AlertDialog;
+import android.app.Dialog;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.ContentUris;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
@@ -16,12 +23,18 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Outline;
+import android.graphics.RenderEffect;
 import android.graphics.Shader;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.Icon;
 import android.media.AudioAttributes;
+import android.media.MediaMetadata;
 import android.media.MediaMetadataRetriever;
 import android.media.MediaPlayer;
+import android.media.session.MediaSession;
+import android.media.session.PlaybackState;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -31,10 +44,14 @@ import android.provider.MediaStore;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.LruCache;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
+import android.view.Window;
+import android.view.WindowManager;
 import android.view.animation.AlphaAnimation;
 import android.view.animation.AnimationSet;
 import android.view.animation.DecelerateInterpolator;
@@ -48,7 +65,7 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
-import android.widget.PopupMenu;
+import android.widget.PopupWindow;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -75,6 +92,11 @@ public class MainActivity extends Activity {
     private static final int REQ_PICK_PL_COVER = 3;
     private static final int REPEAT_OFF = 0, REPEAT_ALL = 1, REPEAT_ONE = 2;
     private static final int BG_BOTTOM = 0xFF0E0E14;
+    private static final int NOTIF_ID = 1;
+    private static final String CHANNEL_ID = "playback";
+    private static final String ACT_PREV = "com.fable.player.PREV";
+    private static final String ACT_PLAY = "com.fable.player.PLAYPAUSE";
+    private static final String ACT_NEXT = "com.fable.player.NEXT";
 
     private static class Track {
         long id;
@@ -126,6 +148,14 @@ public class MainActivity extends Activity {
     private ValueAnimator themeAnim;
     private GradientDrawable mainBg;
 
+    // Размытие переходов (Android 12+)
+    private float blurAmt = 0f;
+    private ValueAnimator blurAnim;
+
+    // Медиасессия (экран блокировки)
+    private MediaSession session;
+    private Bitmap lastArt;
+
     // Вьюхи
     private View rootFrame, mainScreen, nowPlaying, miniBar, miniProgress;
     private View drawerLayer, drawer, drawerDim;
@@ -133,6 +163,7 @@ public class MainActivity extends Activity {
     private TextView headerTitle, listLabel, statTime, statFav, statCount;
     private EditText searchBox;
     private ImageView npCover, miniCover, bgA, bgB;
+    private ParticleView particles;
     private TextView npTitle, npArtist, miniTitle, miniArtist, timeNow, timeTotal;
     private SeekBar seek;
     private ImageButton btnPlay, btnPrev, btnNext, btnRepeat, btnShuffle, miniPlay, miniNext;
@@ -142,6 +173,15 @@ public class MainActivity extends Activity {
     // Свайп
     private float swX, swY;
     private boolean swTracking;
+
+    private final BroadcastReceiver mediaReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context c, Intent i) {
+            String a = i.getAction();
+            if (ACT_PLAY.equals(a)) togglePlay();
+            else if (ACT_NEXT.equals(a)) next(true);
+            else if (ACT_PREV.equals(a)) prev();
+        }
+    };
 
     private final Runnable progressTick = new Runnable() {
         @Override public void run() {
@@ -183,6 +223,7 @@ public class MainActivity extends Activity {
         setupList();
         setupControls();
         setupDrawer();
+        setupMediaSession();
         squareCover();
         loadPlaylists();
 
@@ -192,9 +233,18 @@ public class MainActivity extends Activity {
         applyThemeColors(accent, curDark);
 
         ui.post(progressTick);
+        requestStartPermissions();
+    }
 
+    private void requestStartPermissions() {
+        ArrayList<String> need = new ArrayList<>();
+        if (!hasPermission()) need.add(permissionName());
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(
+                Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            need.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
         if (hasPermission()) loadTracks();
-        else requestPermissions(new String[]{permissionName()}, REQ_PERM);
+        if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), REQ_PERM);
     }
 
     private void bindViews() {
@@ -217,6 +267,7 @@ public class MainActivity extends Activity {
         miniCover = findViewById(R.id.mini_cover);
         bgA = findViewById(R.id.bg_a);
         bgB = findViewById(R.id.bg_b);
+        particles = findViewById(R.id.particles);
         npTitle = findViewById(R.id.np_title);
         npArtist = findViewById(R.id.np_artist);
         miniTitle = findViewById(R.id.mini_title);
@@ -303,8 +354,19 @@ public class MainActivity extends Activity {
                 if (player != null) {
                     try { player.seekTo(s.getProgress()); } catch (IllegalStateException ignored) { }
                 }
+                updatePlaybackState();
             }
         });
+
+        IntentFilter f = new IntentFilter();
+        f.addAction(ACT_PREV);
+        f.addAction(ACT_PLAY);
+        f.addAction(ACT_NEXT);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(mediaReceiver, f, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(mediaReceiver, f);
+        }
     }
 
     private void setupDrawer() {
@@ -318,6 +380,103 @@ public class MainActivity extends Activity {
                 openUrl("https://github.com/GuardionSpend"));
         findViewById(R.id.credit_contrib).setOnClickListener(v ->
                 openUrl("https://github.com/NickIBrody"));
+    }
+
+    // ---------- Медиасессия: управление с экрана блокировки ----------
+
+    private void setupMediaSession() {
+        session = new MediaSession(this, "fable");
+        session.setCallback(new MediaSession.Callback() {
+            @Override public void onPlay() {
+                if (player != null && !player.isPlaying()) togglePlay();
+            }
+            @Override public void onPause() {
+                if (player != null && player.isPlaying()) togglePlay();
+            }
+            @Override public void onSkipToNext() { next(true); }
+            @Override public void onSkipToPrevious() { prev(); }
+            @Override public void onSeekTo(long pos) {
+                if (player != null) {
+                    try { player.seekTo((int) pos); } catch (IllegalStateException ignored) { }
+                }
+                updatePlaybackState();
+            }
+        });
+        session.setActive(true);
+    }
+
+    private void updateSessionMetadata(Track t, Bitmap art) {
+        if (session == null || t == null) return;
+        MediaMetadata.Builder b = new MediaMetadata.Builder()
+                .putString(MediaMetadata.METADATA_KEY_TITLE, t.title)
+                .putString(MediaMetadata.METADATA_KEY_ARTIST, t.artist)
+                .putLong(MediaMetadata.METADATA_KEY_DURATION, t.duration);
+        if (art != null) b.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
+        session.setMetadata(b.build());
+    }
+
+    private void updatePlaybackState() {
+        if (session == null) return;
+        boolean playing = false;
+        long pos = 0;
+        try {
+            if (player != null) {
+                playing = player.isPlaying();
+                pos = player.getCurrentPosition();
+            }
+        } catch (IllegalStateException ignored) { }
+        session.setPlaybackState(new PlaybackState.Builder()
+                .setActions(PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE
+                        | PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_SEEK_TO
+                        | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS)
+                .setState(playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
+                        pos, playing ? 1f : 0f)
+                .build());
+    }
+
+    private PendingIntent mediaPi(String action, int req) {
+        Intent i = new Intent(action).setPackage(getPackageName());
+        return PendingIntent.getBroadcast(this, req, i,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    private void updateMediaNotification() {
+        Track t = currentTrack();
+        if (t == null || session == null) return;
+        boolean playing = player != null && player.isPlaying();
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(CHANNEL_ID) == null) {
+            NotificationChannel ch = new NotificationChannel(CHANNEL_ID,
+                    getString(R.string.notif_channel), NotificationManager.IMPORTANCE_LOW);
+            ch.setShowBadge(false);
+            nm.createNotificationChannel(ch);
+        }
+        Notification.Builder nb = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(this, CHANNEL_ID)
+                : new Notification.Builder(this);
+        nb.setSmallIcon(R.drawable.ic_play)
+                .setContentTitle(t.title)
+                .setContentText(t.artist)
+                .setContentIntent(PendingIntent.getActivity(this, 10,
+                        new Intent(this, MainActivity.class),
+                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE))
+                .setVisibility(Notification.VISIBILITY_PUBLIC)
+                .setOngoing(playing)
+                .setOnlyAlertOnce(true)
+                .addAction(new Notification.Action.Builder(
+                        Icon.createWithResource(this, R.drawable.ic_prev),
+                        getString(R.string.btn_prev), mediaPi(ACT_PREV, 11)).build())
+                .addAction(new Notification.Action.Builder(
+                        Icon.createWithResource(this, playing ? R.drawable.ic_pause : R.drawable.ic_play),
+                        getString(R.string.btn_play), mediaPi(ACT_PLAY, 12)).build())
+                .addAction(new Notification.Action.Builder(
+                        Icon.createWithResource(this, R.drawable.ic_next),
+                        getString(R.string.btn_next), mediaPi(ACT_NEXT, 13)).build())
+                .setStyle(new Notification.MediaStyle()
+                        .setMediaSession(session.getSessionToken())
+                        .setShowActionsInCompactView(0, 1, 2));
+        if (lastArt != null) nb.setLargeIcon(lastArt);
+        try { nm.notify(NOTIF_ID, nb.build()); } catch (Exception ignored) { }
     }
 
     private Track currentTrack() {
@@ -337,6 +496,149 @@ public class MainActivity extends Activity {
                 npCover.setLayoutParams(lp);
             }
         });
+    }
+
+    // ---------- Размытие переходов (Android 12+) ----------
+
+    private void blurMain(float to) {
+        if (Build.VERSION.SDK_INT < 31) return;
+        if (blurAnim != null) blurAnim.cancel();
+        blurAnim = ValueAnimator.ofFloat(blurAmt, to);
+        blurAnim.setDuration(400);
+        blurAnim.setInterpolator(new DecelerateInterpolator(1.6f));
+        blurAnim.addUpdateListener(a -> {
+            blurAmt = (float) a.getAnimatedValue();
+            float r = 26f * blurAmt;
+            mainScreen.setRenderEffect(r < 0.5f ? null
+                    : RenderEffect.createBlurEffect(r, r, Shader.TileMode.CLAMP));
+        });
+        blurAnim.start();
+    }
+
+    // ---------- Красивые меню и диалоги ----------
+
+    private TextView menuRow(String title, int color) {
+        TextView tv = new TextView(this);
+        tv.setText(title);
+        tv.setTextColor(color);
+        tv.setTextSize(14.5f);
+        tv.setTypeface(null, Typeface.BOLD);
+        tv.setPadding(dp(18), dp(13), dp(18), dp(13));
+        TypedValue out = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, out, true);
+        tv.setBackgroundResource(out.resourceId);
+        return tv;
+    }
+
+    /** Стилизованное всплывающее меню вместо системного PopupMenu. */
+    private void showMenuPopup(View anchor, Object[][] items) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setBackgroundResource(R.drawable.bg_menu);
+        box.setPadding(0, dp(8), 0, dp(8));
+        box.setClipToOutline(true);
+
+        int width = dp(236);
+        final PopupWindow pw = new PopupWindow(box, width,
+                ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        pw.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+        pw.setOutsideTouchable(true);
+        pw.setElevation(dp(18));
+
+        for (Object[] it : items) {
+            boolean accentItem = it.length > 2 && Boolean.TRUE.equals(it[2]);
+            TextView tv = menuRow((String) it[0], accentItem ? accent : textColor);
+            final Runnable action = (Runnable) it[1];
+            tv.setOnClickListener(v -> {
+                pw.dismiss();
+                action.run();
+            });
+            box.addView(tv);
+        }
+
+        box.setScaleX(0.88f);
+        box.setScaleY(0.88f);
+        box.setAlpha(0f);
+        box.animate().scaleX(1f).scaleY(1f).alpha(1f)
+                .setDuration(220)
+                .setInterpolator(new DecelerateInterpolator(2f))
+                .start();
+        pw.showAsDropDown(anchor, anchor.getWidth() - width, -dp(6));
+    }
+
+    private TextView dialogButton(String text, int color) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextColor(color);
+        tv.setTextSize(14.5f);
+        tv.setTypeface(null, Typeface.BOLD);
+        tv.setPadding(dp(16), dp(10), dp(16), dp(10));
+        TypedValue out = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, out, true);
+        tv.setBackgroundResource(out.resourceId);
+        return tv;
+    }
+
+    /** Стилизованный диалог в духе приложения (вместо системного AlertDialog). */
+    private Dialog showStyledDialog(String title, View content,
+                                    String posText, Runnable onPos, String negText) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setBackgroundResource(R.drawable.bg_menu);
+        box.setPadding(dp(22), dp(20), dp(22), dp(12));
+
+        TextView tt = new TextView(this);
+        tt.setText(title);
+        tt.setTextColor(textColor);
+        tt.setTextSize(17f);
+        tt.setTypeface(null, Typeface.BOLD);
+        box.addView(tt);
+
+        if (content != null) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.topMargin = dp(16);
+            box.addView(content, lp);
+        }
+
+        final Dialog d = new Dialog(this);
+        d.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.END);
+        TextView neg = dialogButton(negText != null ? negText : getString(R.string.cancel), dimColor);
+        neg.setOnClickListener(v -> d.dismiss());
+        row.addView(neg);
+        if (posText != null) {
+            TextView pos = dialogButton(posText, accent);
+            pos.setOnClickListener(v -> {
+                d.dismiss();
+                if (onPos != null) onPos.run();
+            });
+            row.addView(pos);
+        }
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rlp.topMargin = dp(12);
+        box.addView(row, rlp);
+
+        d.setContentView(box);
+        Window w = d.getWindow();
+        if (w != null) {
+            w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            w.setLayout(dp(318), ViewGroup.LayoutParams.WRAP_CONTENT);
+            w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+        }
+        box.setScaleX(0.92f);
+        box.setScaleY(0.92f);
+        box.setAlpha(0f);
+        d.setOnShowListener(di -> box.animate().scaleX(1f).scaleY(1f).alpha(1f)
+                .setDuration(260)
+                .setInterpolator(new OvershootInterpolator(1.1f))
+                .start());
+        d.show();
+        return d;
     }
 
     // ---------- Свайп вправо: боковое меню ----------
@@ -381,6 +683,7 @@ public class MainActivity extends Activity {
                 .setInterpolator(new DecelerateInterpolator(2.2f))
                 .start();
         drawerDim.animate().alpha(0.6f).setDuration(330).start();
+        blurMain(0.6f);
     }
 
     private void closeDrawer() {
@@ -392,6 +695,7 @@ public class MainActivity extends Activity {
                 .withEndAction(() -> drawerLayer.setVisibility(View.GONE))
                 .start();
         drawerDim.animate().alpha(0f).setDuration(280).start();
+        if (!expanded) blurMain(0f);
     }
 
     /** Наполнение бокового меню: статистика + плейлисты. */
@@ -441,25 +745,19 @@ public class MainActivity extends Activity {
     }
 
     private void showPlaylistMenu(View anchor, final Playlist p) {
-        PopupMenu menu = new PopupMenu(this, anchor);
-        menu.getMenu().add(0, 1, 0, R.string.rename);
-        menu.getMenu().add(0, 2, 1, R.string.pick_cover);
-        menu.getMenu().add(0, 3, 2, R.string.delete);
-        menu.setOnMenuItemClickListener(item -> {
-            switch (item.getItemId()) {
-                case 1:
-                    showNameDialog(getString(R.string.rename), p.name, name -> {
-                        p.name = name;
-                        savePlaylists();
-                        buildDrawer();
-                        if (activePlaylist == p) refreshShown(false);
-                    });
-                    break;
-                case 2:
+        showMenuPopup(anchor, new Object[][]{
+                {getString(R.string.rename), (Runnable) () ->
+                        showNameDialog(getString(R.string.rename), p.name, name -> {
+                            p.name = name;
+                            savePlaylists();
+                            buildDrawer();
+                            if (activePlaylist == p) refreshShown(false);
+                        })},
+                {getString(R.string.pick_cover), (Runnable) () -> {
                     pendingPlCoverId = p.id;
                     pickImage(REQ_PICK_PL_COVER);
-                    break;
-                case 3:
+                }},
+                {getString(R.string.delete), (Runnable) () -> {
                     playlists.remove(p);
                     playlistCoverFile(p.id).delete();
                     savePlaylists();
@@ -468,11 +766,8 @@ public class MainActivity extends Activity {
                         refreshShown(true);
                     }
                     buildDrawer();
-                    break;
-            }
-            return true;
+                }},
         });
-        menu.show();
     }
 
     // ---------- Плейлисты: данные ----------
@@ -538,39 +833,44 @@ public class MainActivity extends Activity {
         final EditText et = new EditText(this);
         et.setHint(R.string.playlist_name_hint);
         et.setSingleLine(true);
-        if (initial != null) et.setText(initial);
-        FrameLayout wrap = new FrameLayout(this);
-        wrap.setPadding(dp(22), dp(8), dp(22), 0);
-        wrap.addView(et);
-        new AlertDialog.Builder(this)
-                .setTitle(title)
-                .setView(wrap)
-                .setPositiveButton(android.R.string.ok, (d, w) -> {
-                    String name = et.getText().toString().trim();
-                    if (!name.isEmpty()) cb.onName(name);
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
+        et.setTextColor(textColor);
+        et.setHintTextColor(dimColor);
+        et.setTextSize(15f);
+        et.setBackgroundResource(R.drawable.bg_search);
+        et.setPadding(dp(16), dp(11), dp(16), dp(11));
+        if (initial != null) {
+            et.setText(initial);
+            et.setSelection(initial.length());
+        }
+        showStyledDialog(title, et, getString(R.string.done), () -> {
+            String name = et.getText().toString().trim();
+            if (!name.isEmpty()) cb.onName(name);
+        }, null);
+        et.requestFocus();
     }
 
     private interface NameCallback { void onName(String name); }
 
     private void addToPlaylistDialog(final Track t) {
-        String[] items = new String[playlists.size() + 1];
-        for (int i = 0; i < playlists.size(); i++) items[i] = playlists.get(i).name;
-        items[playlists.size()] = "+  " + getString(R.string.new_playlist);
-        new AlertDialog.Builder(this)
-                .setTitle(R.string.add_to_playlist)
-                .setItems(items, (d, which) -> {
-                    if (which < playlists.size()) {
-                        addTrackTo(playlists.get(which), t);
-                    } else {
-                        showNameDialog(getString(R.string.new_playlist), null, name ->
-                                addTrackTo(createPlaylist(name), t));
-                    }
-                })
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
+        LinearLayout listBox = new LinearLayout(this);
+        listBox.setOrientation(LinearLayout.VERTICAL);
+        final Dialog[] ref = new Dialog[1];
+        for (final Playlist p : playlists) {
+            TextView row = menuRow(p.name, textColor);
+            row.setOnClickListener(v -> {
+                ref[0].dismiss();
+                addTrackTo(p, t);
+            });
+            listBox.addView(row);
+        }
+        TextView create = menuRow("+  " + getString(R.string.new_playlist), accent);
+        create.setOnClickListener(v -> {
+            ref[0].dismiss();
+            showNameDialog(getString(R.string.new_playlist), null, name ->
+                    addTrackTo(createPlaylist(name), t));
+        });
+        listBox.addView(create);
+        ref[0] = showStyledDialog(getString(R.string.add_to_playlist), listBox, null, null, null);
     }
 
     private void addTrackTo(Playlist p, Track t) {
@@ -586,54 +886,43 @@ public class MainActivity extends Activity {
     // ---------- Меню ----------
 
     private void showMainMenu(View anchor) {
-        PopupMenu menu = new PopupMenu(this, anchor);
-        menu.getMenu().add(0, 1, 0, R.string.menu_refresh);
-        menu.getMenu().add(0, 2, 1, R.string.menu_author);
-        menu.setOnMenuItemClickListener(item -> {
-            if (item.getItemId() == 1) {
-                if (hasPermission()) {
-                    loadTracks();
-                    list.scheduleLayoutAnimation();
-                }
-            } else {
-                openTelegram();
-            }
-            return true;
+        showMenuPopup(anchor, new Object[][]{
+                {getString(R.string.menu_refresh), (Runnable) () -> {
+                    if (hasPermission()) {
+                        loadTracks();
+                        list.scheduleLayoutAnimation();
+                    }
+                }},
+                {getString(R.string.new_playlist), (Runnable) () ->
+                        showNameDialog(getString(R.string.new_playlist), null, name -> {
+                            createPlaylist(name);
+                            Toast.makeText(this, getString(R.string.toast_added) + " · " + name,
+                                    Toast.LENGTH_SHORT).show();
+                        })},
+                {getString(R.string.menu_author), (Runnable) this::openTelegram, true},
         });
-        menu.show();
     }
 
     private void showTrackMenu(View anchor, final Track t) {
-        PopupMenu menu = new PopupMenu(this, anchor);
-        menu.getMenu().add(0, 1, 0, R.string.menu_set_cover);
+        ArrayList<Object[]> items = new ArrayList<>();
+        items.add(new Object[]{getString(R.string.menu_set_cover), (Runnable) () -> {
+            pendingCoverId = t.id;
+            pickImage(REQ_PICK_COVER);
+        }});
         if (customCoverFile(t.id).exists()) {
-            menu.getMenu().add(0, 2, 1, R.string.menu_remove_cover);
+            items.add(new Object[]{getString(R.string.menu_remove_cover),
+                    (Runnable) () -> removeCustomCover(t.id)});
         }
-        menu.getMenu().add(0, 3, 2, R.string.add_to_playlist);
+        items.add(new Object[]{getString(R.string.add_to_playlist),
+                (Runnable) () -> addToPlaylistDialog(t)});
         if (activePlaylist != null && activePlaylist.ids.contains(t.id)) {
-            menu.getMenu().add(0, 4, 3, R.string.remove_from_playlist);
+            items.add(new Object[]{getString(R.string.remove_from_playlist), (Runnable) () -> {
+                activePlaylist.ids.remove(t.id);
+                savePlaylists();
+                refreshShown(false);
+            }});
         }
-        menu.setOnMenuItemClickListener(item -> {
-            switch (item.getItemId()) {
-                case 1:
-                    pendingCoverId = t.id;
-                    pickImage(REQ_PICK_COVER);
-                    break;
-                case 2:
-                    removeCustomCover(t.id);
-                    break;
-                case 3:
-                    addToPlaylistDialog(t);
-                    break;
-                case 4:
-                    activePlaylist.ids.remove(t.id);
-                    savePlaylists();
-                    refreshShown(false);
-                    break;
-            }
-            return true;
-        });
-        menu.show();
+        showMenuPopup(anchor, items.toArray(new Object[0][]));
     }
 
     private void openTelegram() {
@@ -746,12 +1035,15 @@ public class MainActivity extends Activity {
 
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
-        if (code == REQ_PERM) {
-            if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
-                loadTracks();
-            } else {
-                empty.setText(R.string.no_permission);
-                empty.setVisibility(View.VISIBLE);
+        if (code != REQ_PERM) return;
+        for (int i = 0; i < perms.length; i++) {
+            if (perms[i].equals(permissionName())) {
+                if (results[i] == PackageManager.PERMISSION_GRANTED) {
+                    loadTracks();
+                } else {
+                    empty.setText(R.string.no_permission);
+                    empty.setVisibility(View.VISIBLE);
+                }
             }
         }
     }
@@ -846,6 +1138,8 @@ public class MainActivity extends Activity {
                 .withEndAction(() -> npTitle.setSelected(true))
                 .start();
         mainScreen.animate().alpha(0.4f).scaleX(0.96f).scaleY(0.96f).setDuration(420).start();
+        blurMain(1f);
+        particles.setRunning(player != null && player.isPlaying());
         // мини-плеер прячется, чтобы не перекрывать кнопки плеера
         miniBar.animate().translationY(dp(140)).alpha(0f)
                 .setDuration(260)
@@ -862,6 +1156,8 @@ public class MainActivity extends Activity {
                 .withEndAction(() -> nowPlaying.setVisibility(View.INVISIBLE))
                 .start();
         mainScreen.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(360).start();
+        blurMain(0f);
+        particles.setRunning(false);
         if (playingId >= 0) {
             miniBar.setVisibility(View.VISIBLE);
             miniBar.animate().translationY(0).alpha(1f).setDuration(320).start();
@@ -870,9 +1166,15 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (drawerOpen) closeDrawer();
-        else if (expanded) collapsePlayer();
-        else super.onBackPressed();
+        if (drawerOpen) {
+            closeDrawer();
+        } else if (expanded) {
+            collapsePlayer();
+        } else {
+            showStyledDialog(getString(R.string.exit_q), null,
+                    getString(R.string.exit_yes), this::finish,
+                    getString(R.string.exit_no));
+        }
     }
 
     // ---------- Воспроизведение ----------
@@ -920,6 +1222,8 @@ public class MainActivity extends Activity {
         seek.setProgress(0);
         timeNow.setText("0:00");
         timeTotal.setText(formatTime((int) t.duration));
+        lastArt = null;
+        updateSessionMetadata(t, null);
         setPlayingState(true);
         if (!expanded) showMiniBar();
         adapter.notifyDataSetChanged();
@@ -952,7 +1256,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Иконки play/pause с «пружинкой», обложка слегка дышит при паузе. */
+    /** Иконки play/pause с «пружинкой», обложка дышит, огоньки включаются. */
     private void setPlayingState(boolean playing) {
         int icon = playing ? R.drawable.ic_pause : R.drawable.ic_play;
         miniPlay.setImageResource(icon);
@@ -968,6 +1272,9 @@ public class MainActivity extends Activity {
                 .setDuration(380)
                 .setInterpolator(new DecelerateInterpolator(2f))
                 .start();
+        if (expanded) particles.setRunning(playing);
+        updatePlaybackState();
+        updateMediaNotification();
     }
 
     private void next(boolean byUser) {
@@ -989,6 +1296,7 @@ public class MainActivity extends Activity {
         if (queue.isEmpty()) return;
         if (player != null && player.getCurrentPosition() > 4000) {
             player.seekTo(0);
+            updatePlaybackState();
             return;
         }
         int n = qIndex - 1;
@@ -1000,6 +1308,7 @@ public class MainActivity extends Activity {
         if (repeatMode == REPEAT_ONE && player != null) {
             player.seekTo(0);
             player.start();
+            updatePlaybackState();
         } else {
             next(false);
         }
@@ -1031,12 +1340,15 @@ public class MainActivity extends Activity {
         exec.execute(() -> {
             final Bitmap art = loadArt(t, 1024);
             final int color = art != null ? extractAccent(art) : defaultAccent;
-            final Bitmap blurBmp = art != null ? blur(art) : null;
+            final Bitmap blurBmp = art != null ? blurBitmap(art) : null;
             ui.post(() -> {
                 if (playingId != id) return;
+                lastArt = art;
                 swapCover(art);
                 swapBackground(blurBmp);
                 animateTheme(color);
+                updateSessionMetadata(t, art);
+                updateMediaNotification();
             });
         });
     }
@@ -1079,7 +1391,7 @@ public class MainActivity extends Activity {
     }
 
     /** «Размытие» через уменьшение до 26px и растягивание с фильтрацией. */
-    private Bitmap blur(Bitmap src) {
+    private Bitmap blurBitmap(Bitmap src) {
         int h = Math.max(1, (int) (26f * src.getHeight() / src.getWidth()));
         return Bitmap.createScaledBitmap(src, 26, h, true);
     }
@@ -1194,6 +1506,7 @@ public class MainActivity extends Activity {
         btnNext.setImageTintList(ColorStateList.valueOf(textColor));
         miniPlay.setImageTintList(ColorStateList.valueOf(textColor));
         miniNext.setImageTintList(ColorStateList.valueOf(textColor));
+        particles.setColorTint(acc);
 
         String text = headerTitle.getText().toString();
         headerTitle.getPaint().setShader(new LinearGradient(
@@ -1346,7 +1659,16 @@ public class MainActivity extends Activity {
         saveStats();
         ui.removeCallbacksAndMessages(null);
         if (themeAnim != null) themeAnim.cancel();
+        if (blurAnim != null) blurAnim.cancel();
         exec.shutdownNow();
+        try { unregisterReceiver(mediaReceiver); } catch (Exception ignored) { }
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        if (nm != null) nm.cancel(NOTIF_ID);
+        if (session != null) {
+            session.setActive(false);
+            session.release();
+            session = null;
+        }
         if (player != null) {
             player.release();
             player = null;
