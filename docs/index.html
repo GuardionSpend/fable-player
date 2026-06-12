@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fable Player — музыка, которая красит всё вокруг</title>
+<meta name="description" content="Тёмный музыкальный плеер для Android. Интерфейс подстраивается под цвет обложки трека. Плейлисты, эквалайзер, без рекламы. Открытый код.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=Unbounded:wght@600;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ac:#8c6fff;
+  --ac-soft:rgba(140,111,255,.16);
+  --bg:#0e0e14;
+  --bg2:#12121c;
+  --card:rgba(255,255,255,.04);
+  --line:rgba(255,255,255,.09);
+  --txt:#f2f2f7;
+  --dim:#9a9aa8;
+  --r:24px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);
+  color:var(--txt);
+  font-family:'Manrope',system-ui,sans-serif;
+  overflow-x:hidden;
+  transition:background .8s;
+}
+::selection{background:var(--ac);color:#0e0e14}
+
+/* ---------- фоновые свечения ---------- */
+.glow{position:fixed;border-radius:50%;filter:blur(120px);opacity:.55;pointer-events:none;z-index:0;transition:background 1.2s}
+.glow.g1{width:60vw;height:60vw;background:var(--ac-soft);top:-20vw;left:-15vw;animation:drift1 18s ease-in-out infinite alternate}
+.glow.g2{width:50vw;height:50vw;background:var(--ac-soft);bottom:-25vw;right:-15vw;animation:drift2 22s ease-in-out infinite alternate}
+@keyframes drift1{from{transform:translate(0,0) scale(1)}to{transform:translate(8vw,6vh) scale(1.15)}}
+@keyframes drift2{from{transform:translate(0,0) scale(1.1)}to{transform:translate(-7vw,-5vh) scale(.95)}}
+
+#fx{position:fixed;inset:0;z-index:1;pointer-events:none}
+
+/* ---------- шапка ---------- */
+header{
+  position:fixed;top:0;left:0;right:0;z-index:50;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:18px clamp(20px,5vw,56px);
+  background:rgba(14,14,20,.55);
+  backdrop-filter:blur(18px);
+  -webkit-backdrop-filter:blur(18px);
+  border-bottom:1px solid var(--line);
+}
+.logo{font-family:'Unbounded',sans-serif;font-weight:800;font-size:18px;letter-spacing:.5px;text-decoration:none;
+  background:linear-gradient(90deg,var(--ac),var(--txt));-webkit-background-clip:text;background-clip:text;color:transparent;transition:all 1s}
+nav{display:flex;gap:8px}
+nav a{color:var(--dim);text-decoration:none;font-size:14px;font-weight:600;padding:8px 14px;border-radius:12px;transition:.25s}
+nav a:hover{color:var(--txt);background:var(--card)}
+@media(max-width:640px){nav a.hide-m{display:none}}
+
+/* ---------- hero ---------- */
+.hero{
+  position:relative;z-index:2;
+  min-height:100svh;
+  display:flex;align-items:center;justify-content:center;gap:clamp(30px,6vw,90px);
+  flex-wrap:wrap;
+  padding:120px clamp(20px,6vw,70px) 70px;
+}
+.hero-txt{max-width:560px}
+.chip{
+  display:inline-flex;align-items:center;gap:8px;
+  font-size:12.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ac);
+  border:1px solid var(--ac);border-radius:999px;padding:7px 16px;margin-bottom:26px;
+  background:var(--ac-soft);transition:all 1s;
+  animation:pulse 3s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 var(--ac-soft)}50%{box-shadow:0 0 0 9px transparent}}
+h1{
+  font-family:'Unbounded',sans-serif;font-weight:800;
+  font-size:clamp(38px,6vw,72px);line-height:1.04;letter-spacing:-.5px;
+}
+h1 .grad{
+  background:linear-gradient(90deg,var(--ac) 0%,#fff 55%,var(--ac) 100%);
+  background-size:200% auto;
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:shine 5s linear infinite;
+}
+@keyframes shine{to{background-position:200% center}}
+.sub{color:var(--dim);font-size:clamp(15px,1.6vw,18.5px);line-height:1.7;margin:26px 0 38px;max-width:480px}
+.sub b{color:var(--txt)}
+.btns{display:flex;gap:14px;flex-wrap:wrap}
+.btn{
+  display:inline-flex;align-items:center;gap:10px;
+  font-family:inherit;font-weight:800;font-size:15px;text-decoration:none;
+  padding:16px 28px;border-radius:18px;transition:.3s;cursor:pointer;
+}
+.btn svg{width:19px;height:19px;flex:none}
+.btn.primary{
+  background:var(--ac);color:#0e0e14;
+  box-shadow:0 10px 40px -8px var(--ac);
+}
+.btn.primary:hover{transform:translateY(-3px) scale(1.02);box-shadow:0 18px 56px -8px var(--ac)}
+.btn.ghost{
+  color:var(--txt);border:1px solid var(--line);background:var(--card);
+  backdrop-filter:blur(10px);
+}
+.btn.ghost:hover{transform:translateY(-3px);border-color:var(--ac);color:var(--ac)}
+
+/* ---------- макет телефона ---------- */
+.phone-wrap{position:relative;animation:float 7s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0) rotate(-1.2deg)}50%{transform:translateY(-20px) rotate(1.2deg)}}
+.phone{
+  width:300px;height:620px;border-radius:46px;
+  background:linear-gradient(160deg,#15151f,#0b0b11);
+  border:1px solid var(--line);
+  box-shadow:0 40px 90px -20px rgba(0,0,0,.8),0 0 90px -30px var(--ac);
+  padding:18px;position:relative;transition:box-shadow 1.2s;
+}
+.notch{width:90px;height:24px;border-radius:14px;background:#06060a;margin:2px auto 14px}
+.scr{height:calc(100% - 40px);border-radius:32px;overflow:hidden;display:flex;flex-direction:column;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--ac) 22%,#0e0e14),#0e0e14);transition:background 1.2s;padding:22px 20px}
+.cover{
+  width:100%;aspect-ratio:1;border-radius:22px;margin-bottom:20px;position:relative;overflow:hidden;
+  background:conic-gradient(from var(--rot,0deg),var(--ac),#1b1b27 40%,var(--ac) 75%,#2a2a3a);
+  animation:spin 14s linear infinite;box-shadow:0 16px 44px -12px rgba(0,0,0,.7);
+}
+@property --rot{syntax:'<angle>';initial-value:0deg;inherits:false}
+@keyframes spin{to{--rot:360deg}}
+.cover::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 32% 28%,rgba(255,255,255,.22),transparent 55%)}
+.t1{font-weight:800;font-size:17px}
+.t2{color:var(--dim);font-size:13px;margin-top:3px}
+.bar{height:4px;border-radius:4px;background:rgba(255,255,255,.12);margin:18px 0 8px;overflow:hidden}
+.bar i{display:block;height:100%;width:40%;border-radius:4px;background:var(--ac);animation:prog 16s linear infinite;transition:background 1.2s}
+@keyframes prog{from{width:2%}to{width:98%}}
+.tt{display:flex;justify-content:space-between;color:var(--dim);font-size:10.5px}
+.ctr{display:flex;align-items:center;justify-content:space-around;margin-top:18px}
+.ctr svg{width:22px;height:22px;fill:var(--txt);opacity:.85}
+.play{
+  width:62px;height:62px;border-radius:50%;background:var(--ac);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 10px 30px -6px var(--ac);transition:background 1.2s,box-shadow 1.2s;
+  animation:beat 2.2s ease-in-out infinite;
+}
+@keyframes beat{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+.play svg{fill:#0e0e14;opacity:1}
+.eqz{display:flex;gap:4px;align-items:flex-end;height:26px;margin-top:auto;justify-content:center;padding-top:18px}
+.eqz i{width:5px;border-radius:3px;background:var(--ac);opacity:.85;animation:eq 1s ease-in-out infinite;transition:background 1.2s}
+.eqz i:nth-child(1){animation-delay:0s;height:40%}.eqz i:nth-child(2){animation-delay:.15s;height:90%}
+.eqz i:nth-child(3){animation-delay:.3s;height:60%}.eqz i:nth-child(4){animation-delay:.45s;height:100%}
+.eqz i:nth-child(5){animation-delay:.6s;height:50%}.eqz i:nth-child(6){animation-delay:.2s;height:80%}
+.eqz i:nth-child(7){animation-delay:.5s;height:35%}
+@keyframes eq{0%,100%{transform:scaleY(.5)}50%{transform:scaleY(1.1)}}
+
+/* ---------- секции ---------- */
+section{position:relative;z-index:2;padding:90px clamp(20px,6vw,70px);max-width:1200px;margin:0 auto}
+.sec-chip{color:var(--ac);font-weight:800;letter-spacing:.18em;text-transform:uppercase;font-size:12px;transition:color 1s}
+h2{font-family:'Unbounded',sans-serif;font-size:clamp(26px,3.6vw,42px);font-weight:800;margin:14px 0 18px;line-height:1.15}
+.lead{color:var(--dim);font-size:16.5px;line-height:1.75;max-width:640px}
+
+/* карточки */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(265px,1fr));gap:18px;margin-top:48px}
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  padding:30px 26px;transition:.35s;position:relative;overflow:hidden;
+}
+.card::before{
+  content:'';position:absolute;inset:0;opacity:0;transition:.4s;
+  background:radial-gradient(420px circle at var(--mx,50%) var(--my,0%),var(--ac-soft),transparent 65%);
+}
+.card:hover{transform:translateY(-6px);border-color:color-mix(in srgb,var(--ac) 45%,transparent)}
+.card:hover::before{opacity:1}
+.card .ico{
+  width:48px;height:48px;border-radius:15px;display:flex;align-items:center;justify-content:center;
+  background:var(--ac-soft);margin-bottom:18px;transition:background 1s;
+}
+.card .ico svg{width:24px;height:24px;fill:var(--ac);transition:fill 1s}
+.card h3{font-size:17.5px;margin-bottom:9px}
+.card p{color:var(--dim);font-size:14px;line-height:1.65}
+
+/* интерактив: палитра */
+.palette{display:flex;gap:14px;flex-wrap:wrap;margin-top:34px;align-items:center}
+.dot{
+  width:46px;height:46px;border-radius:50%;cursor:pointer;border:2px solid transparent;
+  transition:.25s;box-shadow:0 6px 22px -6px rgba(0,0,0,.6);
+}
+.dot:hover{transform:scale(1.16)}
+.dot.on{border-color:#fff;transform:scale(1.16)}
+.pal-hint{color:var(--dim);font-size:13px;width:100%;margin-top:6px}
+
+/* CTA */
+.cta{
+  text-align:center;border:1px solid var(--line);border-radius:34px;
+  background:linear-gradient(180deg,var(--ac-soft),transparent 70%);
+  padding:clamp(50px,7vw,90px) 28px;transition:background 1.2s;
+}
+.cta .btns{justify-content:center;margin-top:36px}
+
+/* футер */
+footer{
+  position:relative;z-index:2;border-top:1px solid var(--line);
+  padding:46px clamp(20px,6vw,70px);max-width:1200px;margin:40px auto 0;
+  display:flex;justify-content:space-between;gap:26px;flex-wrap:wrap;align-items:center;
+}
+footer .who{color:var(--dim);font-size:13.5px;line-height:2}
+footer a{color:var(--txt);text-decoration:none;font-weight:700;transition:.2s}
+footer a:hover{color:var(--ac)}
+.mini-logo{font-family:'Unbounded',sans-serif;font-weight:800;font-size:15px;color:var(--ac);transition:color 1s}
+
+/* появление при скролле */
+.rv{opacity:0;transform:translateY(34px);transition:opacity .8s cubic-bezier(.2,.7,.3,1),transform .8s cubic-bezier(.2,.7,.3,1)}
+.rv.in{opacity:1;transform:none}
+.rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}
+.rv.d4{transition-delay:.32s}.rv.d5{transition-delay:.4s}.rv.d6{transition-delay:.48s}
+
+@media(prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+
+<div class="glow g1"></div>
+<div class="glow g2"></div>
+<canvas id="fx"></canvas>
+
+<header>
+  <a class="logo" href="#">Fable Player</a>
+  <nav>
+    <a href="#feat" class="hide-m">Возможности</a>
+    <a href="#theme" class="hide-m">Тема</a>
+    <a href="https://github.com/GuardionSpend/fable-player" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://github.com/GuardionSpend/fable-player/releases/latest" target="_blank" rel="noopener" style="color:var(--ac)">Скачать</a>
+  </nav>
+</header>
+
+<!-- ================= HERO ================= -->
+<div class="hero">
+  <div class="hero-txt">
+    <div class="chip rv">● Android · открытый код</div>
+    <h1 class="rv d1">Музыка, которая<br><span class="grad">красит всё вокруг</span></h1>
+    <p class="sub rv d2">
+      <b>Fable Player</b> — тёмный плеер для Android, который вытягивает цвет из обложки трека
+      и переливает им весь интерфейс: фон, кнопки, даже светящиеся огоньки.
+      Никакой рекламы и слежки — мы стремимся к минимальному размеру и максимальной красоте.
+    </p>
+    <div class="btns rv d3">
+      <a class="btn primary" href="https://github.com/GuardionSpend/fable-player/releases/latest/download/FablePlayer.apk">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg>
+        Скачать APK
+      </a>
+      <a class="btn ghost" href="https://github.com/GuardionSpend/fable-player" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.58 2 12.26c0 4.53 2.87 8.37 6.84 9.73.5.09.68-.22.68-.49 0-.24-.01-.87-.01-1.7-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.5-1.11-1.5-.91-.63.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.89 1.57 2.34 1.12 2.91.85.09-.66.35-1.12.63-1.37-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.7 0 0 .84-.28 2.75 1.05a9.36 9.36 0 0 1 5 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.4.2 2.44.1 2.7.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.8-4.57 5.06.36.32.68.94.68 1.9 0 1.37-.01 2.47-.01 2.81 0 .27.18.59.69.49A10.27 10.27 0 0 0 22 12.26C22 6.58 17.52 2 12 2z"/></svg>
+        Исходный код
+      </a>
+      <a class="btn ghost" href="https://t.me/GuardionSpend" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9.04 15.51 8.9 19.1c.36 0 .52-.16.71-.35l1.7-1.63 3.53 2.59c.65.36 1.11.17 1.29-.6l2.34-10.97c.21-.96-.35-1.34-.98-1.1L4.27 12.1c-.94.36-.92.88-.16 1.12l3.52 1.1 8.17-5.15c.38-.23.73-.1.44.13l-7.2 6.21z"/></svg>
+        Telegram
+      </a>
+    </div>
+  </div>
+
+  <div class="phone-wrap rv d3">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="scr">
+        <div class="cover"></div>
+        <div class="t1" id="mock-title">Midnight Drive</div>
+        <div class="t2" id="mock-artist">Fable Waves</div>
+        <div class="bar"><i></i></div>
+        <div class="tt"><span>1:24</span><span>3:48</span></div>
+        <div class="ctr">
+          <svg viewBox="0 0 24 24"><path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zM9.5 12l8.5 6V6z"/></svg>
+          <div class="play"><svg viewBox="0 0 24 24" width="26" height="26"><path d="M8 5v14l11-7z"/></svg></div>
+          <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+        </div>
+        <div class="eqz"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================= ПРЕИМУЩЕСТВА ================= -->
+<section id="feat">
+  <div class="sec-chip rv">Почему Fable</div>
+  <h2 class="rv d1">Маленький снаружи.<br>Большой внутри.</h2>
+  <p class="lead rv d2">Мы выбросили всё лишнее — библиотеки, рекламу, трекеры — и оставили только то,
+    что делает музыку приятнее. Поэтому плеер летает даже на старых телефонах.</p>
+
+  <div class="grid">
+    <div class="card rv d1">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 22C6.49 22 2 17.51 2 12S6.49 2 12 2s10 4.04 10 9c0 3.31-2.69 6-6 6h-1.77c-.28 0-.5.22-.5.5 0 .12.05.23.13.33.41.47.64 1.06.64 1.67A2.5 2.5 0 0 1 12 22zm0-18c-4.41 0-8 3.59-8 8s3.59 8 8 8c.28 0 .5-.22.5-.5a.54.54 0 0 0-.14-.35c-.41-.46-.63-1.05-.63-1.65a2.5 2.5 0 0 1 2.5-2.5H16c2.21 0 4-1.79 4-4 0-3.86-3.59-7-8-7z"/><circle cx="6.5" cy="11.5" r="1.5"/><circle cx="9.5" cy="7.5" r="1.5"/><circle cx="14.5" cy="7.5" r="1.5"/><circle cx="17.5" cy="11.5" r="1.5"/></svg></div>
+      <h3>Адаптивная тема</h3>
+      <p>Плеер вытягивает доминирующий цвет из обложки и плавно переливает им весь интерфейс — каждый альбом выглядит по-своему.</p>
+    </div>
+    <div class="card rv d2">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg></div>
+      <h3>Эквалайзер и скорость</h3>
+      <p>Восемь регуляторов: полосы частот, бас, объём и скорость 0.5x–2x. Настроил один раз — работает на всех треках.</p>
+    </div>
+    <div class="card rv d3">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/></svg></div>
+      <h3>Плейлисты с характером</h3>
+      <p>Создавайте плейлисты, давайте им имена и собственные обложки. Свайп вправо — и вся коллекция под рукой.</p>
+    </div>
+    <div class="card rv d4">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9z"/></svg></div>
+      <h3>Экран блокировки</h3>
+      <p>Управление прямо с экрана блокировки и шторки: обложка, перемотка, переключение треков — не открывая телефон.</p>
+    </div>
+    <div class="card rv d5">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM13 13v4h-2v-4H8l4-4 4 4h-3z"/></svg></div>
+      <h3>Лёгкость как принцип</h3>
+      <p>Никаких тяжёлых библиотек — чистый код. Мы стремимся к минимальному размеру: скачал за секунду, установил, слушаешь.</p>
+    </div>
+    <div class="card rv d6">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg></div>
+      <h3>Без рекламы и слежки</h3>
+      <p>Открытый исходный код на GitHub. Ни одного трекера, ни одного баннера — только вы и ваша музыка.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ДЕМО ТЕМЫ ================= -->
+<section id="theme">
+  <div class="sec-chip rv">Попробуйте прямо здесь</div>
+  <h2 class="rv d1">Каждый альбом —<br>своя атмосфера</h2>
+  <p class="lead rv d2">Так это работает в приложении: заиграл новый трек — и весь интерфейс плавно
+    перетёк в его цвет. Нажмите на «обложку» — этот сайт сделает то же самое.</p>
+  <div class="palette rv d3">
+    <div class="dot on" style="background:#8c6fff" data-c="#8c6fff" data-t="Midnight Drive" data-a="Fable Waves"></div>
+    <div class="dot" style="background:#ff6f91" data-c="#ff6f91" data-t="Neon Heart" data-a="Crimson Echo"></div>
+    <div class="dot" style="background:#39c5bb" data-c="#39c5bb" data-t="Ocean Floor" data-a="Deep Current"></div>
+    <div class="dot" style="background:#ffb454" data-c="#ffb454" data-t="Golden Hour" data-a="Sunset Tape"></div>
+    <div class="dot" style="background:#7ddf64" data-c="#7ddf64" data-t="Forest Pulse" data-a="Mossy Beats"></div>
+    <div class="dot" style="background:#5aa7ff" data-c="#5aa7ff" data-t="Sky Línes" data-a="Cloud Nine"></div>
+    <div class="pal-hint">…а в плеере цвет подбирается автоматически из любой обложки.</div>
+  </div>
+</section>
+
+<!-- ================= CTA ================= -->
+<section>
+  <div class="cta rv">
+    <div class="sec-chip">Бесплатно · без регистрации</div>
+    <h2>Заберите свою музыку<br>в новые цвета</h2>
+    <p class="lead" style="margin:0 auto">Android 7.0 и новее. Установка за пару секунд.</p>
+    <div class="btns">
+      <a class="btn primary" href="https://github.com/GuardionSpend/fable-player/releases/latest/download/FablePlayer.apk">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg>
+        Скачать последний релиз
+      </a>
+      <a class="btn ghost" href="https://github.com/GuardionSpend/fable-player/releases" target="_blank" rel="noopener">Все версии</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div>
+    <div class="mini-logo">Fable Player</div>
+    <div class="who" style="margin-top:6px">Сделано с любовью к музыке.</div>
+  </div>
+  <div class="who">
+    Разработчик — <a href="https://github.com/GuardionSpend" target="_blank" rel="noopener">GuardionSpend</a>
+    · <a href="https://t.me/GuardionSpend" target="_blank" rel="noopener">Telegram</a><br>
+    Контрибьютор — <a href="https://github.com/NickIBrody" target="_blank" rel="noopener">NickIBrody</a>
+  </div>
+</footer>
+
+<script>
+/* ---------- частицы-огоньки (как в приложении) ---------- */
+const cv = document.getElementById('fx'), ctx = cv.getContext('2d');
+let W, H, ps = [];
+let AC = {r:140, g:111, b:255};
+function resize(){ W = cv.width = innerWidth; H = cv.height = innerHeight; }
+addEventListener('resize', resize); resize();
+function mk(any){
+  return { x: Math.random()*W, y: any ? Math.random()*H : H+20,
+    r: 1+Math.random()*2.4, sp: .15+Math.random()*.45,
+    ph: Math.random()*6.28, dr: 8+Math.random()*26, tw: .6+Math.random()*1.6 };
+}
+for(let i=0;i<42;i++) ps.push(mk(true));
+function tick(t){
+  ctx.clearRect(0,0,W,H);
+  const s = t/1000;
+  for(const p of ps){
+    p.y -= p.sp;
+    if(p.y < -30) Object.assign(p, mk(false));
+    const x = p.x + Math.sin(s*.6+p.ph)*p.dr;
+    const a = .3+.7*(.5+.5*Math.sin(s*p.tw*2+p.ph));
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(${AC.r},${AC.g},${AC.b},${.12*a})`;
+    ctx.arc(x,p.y,p.r*3.4,0,7); ctx.fill();
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(255,255,255,${.5*a})`;
+    ctx.arc(x,p.y,p.r,0,7); ctx.fill();
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+/* ---------- смена акцента (адаптивная тема) ---------- */
+function hex2rgb(h){ return {r:parseInt(h.slice(1,3),16), g:parseInt(h.slice(3,5),16), b:parseInt(h.slice(5,7),16)}; }
+function setAccent(hex, title, artist){
+  const c = hex2rgb(hex);
+  AC = c;
+  const root = document.documentElement.style;
+  root.setProperty('--ac', hex);
+  root.setProperty('--ac-soft', `rgba(${c.r},${c.g},${c.b},.16)`);
+  if(title){ document.getElementById('mock-title').textContent = title;
+             document.getElementById('mock-artist').textContent = artist; }
+}
+const dots = [...document.querySelectorAll('.dot')];
+dots.forEach(d => d.addEventListener('click', () => {
+  dots.forEach(x => x.classList.remove('on'));
+  d.classList.add('on');
+  setAccent(d.dataset.c, d.dataset.t, d.dataset.a);
+}));
+/* лёгкая авто-смена, пока пользователь не выбрал сам */
+let userPicked = false;
+dots.forEach(d => d.addEventListener('click', () => userPicked = true));
+let autoI = 0;
+setInterval(() => {
+  if(userPicked) return;
+  autoI = (autoI+1) % dots.length;
+  dots.forEach(x => x.classList.remove('on'));
+  dots[autoI].classList.add('on');
+  const d = dots[autoI];
+  setAccent(d.dataset.c, d.dataset.t, d.dataset.a);
+}, 5000);
+
+/* ---------- появление при скролле ---------- */
+const io = new IntersectionObserver(es => es.forEach(e => {
+  if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+}), {threshold:.12});
+document.querySelectorAll('.rv').forEach(el => io.observe(el));
+
+/* ---------- подсветка карточек за курсором ---------- */
+document.querySelectorAll('.card').forEach(c => {
+  c.addEventListener('mousemove', e => {
+    const r = c.getBoundingClientRect();
+    c.style.setProperty('--mx', (e.clientX-r.left)+'px');
+    c.style.setProperty('--my', (e.clientY-r.top)+'px');
+  });
+});
+</script>
+</body>
+</html>
