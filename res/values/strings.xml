@@ -36,6 +36,16 @@
     <string name="stat_listened">Прослушано</string>
     <string name="stat_fav">Любимый трек</string>
     <string name="stat_tracks">В библиотеке</string>
+    <string name="eq_title">Эквалайзер</string>
+    <string name="bass">Бас</string>
+    <string name="surround">Объём</string>
+    <string name="speed">Скорость</string>
+    <string name="reset">Сбросить</string>
+    <string name="settings">Настройки</string>
+    <string name="close">Закрыть</string>
+    <string name="power_save">Энергосбережение</string>
+    <string name="power_save_sub">Отключает анимации, огоньки и размытие</string>
+    <string name="version_link">Fable Player v1.2 · открытый код на GitHub</string>
     <string name="exit_q">Выйти из Fable Player?</string>
     <string name="exit_yes">Выйти</string>
     <string name="exit_no">Остаться</string>
