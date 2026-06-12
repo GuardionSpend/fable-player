@@ -5,18 +5,13 @@ import android.animation.ArgbEvaluator;
 import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.Dialog;
-import android.app.Notification;
-import android.app.NotificationChannel;
-import android.app.NotificationManager;
-import android.app.PendingIntent;
-import android.content.BroadcastReceiver;
-import android.content.ContentUris;
 import android.content.Context;
+import android.content.ContentUris;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -28,17 +23,7 @@ import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.Icon;
-import android.media.AudioAttributes;
-import android.media.MediaMetadata;
 import android.media.MediaMetadataRetriever;
-import android.media.MediaPlayer;
-import android.media.PlaybackParams;
-import android.media.audiofx.BassBoost;
-import android.media.audiofx.Equalizer;
-import android.media.audiofx.Virtualizer;
-import android.media.session.MediaSession;
-import android.media.session.PlaybackState;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -86,30 +71,18 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Locale;
-import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements PlayerService.Listener {
 
     private static final int REQ_PERM = 1;
     private static final int REQ_PICK_COVER = 2;
     private static final int REQ_PICK_PL_COVER = 3;
-    private static final int REPEAT_OFF = 0, REPEAT_ALL = 1, REPEAT_ONE = 2;
     private static final int BG_BOTTOM = 0xFF0E0E14;
-    private static final int NOTIF_ID = 1;
-    private static final String CHANNEL_ID = "playback";
-    private static final String ACT_PREV = "com.fable.player.PREV";
-    private static final String ACT_PLAY = "com.fable.player.PLAYPAUSE";
-    private static final String ACT_NEXT = "com.fable.player.NEXT";
-
-    private static class Track {
-        long id;
-        String title;
-        String artist;
-        long duration;
-    }
 
     private static class Playlist {
         long id;
@@ -117,55 +90,41 @@ public class MainActivity extends Activity {
         final ArrayList<Long> ids = new ArrayList<>();
     }
 
-    // Библиотека и очередь
+    // Библиотека
     private final ArrayList<Track> allTracks = new ArrayList<>();
     private final ArrayList<Track> shownTracks = new ArrayList<>();
-    private final ArrayList<Track> queue = new ArrayList<>();
-    private int qIndex = -1;
     private long playingId = -1;
     private final ArrayList<Playlist> playlists = new ArrayList<>();
     private Playlist activePlaylist; // null = вся музыка
+    private boolean favMode = false;
+    private Set<String> favs = new HashSet<>();
 
     private TrackAdapter adapter;
-    private MediaPlayer player;
-    private int repeatMode = REPEAT_OFF;
+    private int repeatMode = PlayerService.REPEAT_OFF;
     private boolean shuffle = false;
     private boolean userSeeking = false;
     private boolean expanded = false;
     private boolean drawerOpen = false;
     private boolean bgToggle = false;
+    private boolean onboardOpen = false;
     private long pendingCoverId = -1;
     private long pendingPlCoverId = -1;
-    private final Random random = new Random();
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService exec = Executors.newSingleThreadExecutor();
     private final LruCache<Long, Bitmap> thumbCache = new LruCache<>(120);
     private final ArgbEvaluator argb = new ArgbEvaluator();
 
-    // Статистика
     private SharedPreferences prefs;
-    private long listenedMs;
-    private int saveTick;
+    private String lang;
 
     // Тема
     private int accent, curDark;
     private int defaultAccent, textColor, dimColor;
     private ValueAnimator themeAnim;
     private GradientDrawable mainBg;
-
-    // Размытие переходов (Android 12+)
     private float blurAmt = 0f;
     private ValueAnimator blurAnim;
-
-    // Медиасессия (экран блокировки)
-    private MediaSession session;
-    private Bitmap lastArt;
-
-    // Эквалайзер, эффекты, энергосбережение
-    private Equalizer eq;
-    private BassBoost bass;
-    private Virtualizer virt;
     private boolean powerSave;
 
     // Вьюхи
@@ -175,6 +134,7 @@ public class MainActivity extends Activity {
     private TextView headerTitle, listLabel, statTime, statFav, statCount;
     private EditText searchBox;
     private ImageView npCover, miniCover, bgA, bgB;
+    private ImageButton btnFav;
     private ParticleView particles;
     private TextView npTitle, npArtist, miniTitle, miniArtist, timeNow, timeTotal;
     private SeekBar seek;
@@ -186,34 +146,32 @@ public class MainActivity extends Activity {
     private float swX, swY;
     private boolean swTracking;
 
-    private final BroadcastReceiver mediaReceiver = new BroadcastReceiver() {
-        @Override public void onReceive(Context c, Intent i) {
-            String a = i.getAction();
-            if (ACT_PLAY.equals(a)) togglePlay();
-            else if (ACT_NEXT.equals(a)) next(true);
-            else if (ACT_PREV.equals(a)) prev();
-        }
-    };
-
     private final Runnable progressTick = new Runnable() {
         @Override public void run() {
-            if (player != null) {
-                try {
-                    if (player.isPlaying()) {
-                        listenedMs += 300;
-                        if (++saveTick >= 50) { saveTick = 0; saveStats(); }
-                    }
-                    int pos = player.getCurrentPosition();
-                    if (!userSeeking) {
-                        seek.setProgress(pos, true);
-                        timeNow.setText(formatTime(pos));
-                    }
-                    updateMiniProgress(pos, seek.getMax());
-                } catch (IllegalStateException ignored) { }
+            PlayerService s = svc();
+            if (s != null && s.current() != null) {
+                int pos = s.position();
+                if (!userSeeking) {
+                    seek.setProgress(pos, true);
+                    timeNow.setText(formatTime(pos));
+                }
+                updateMiniProgress(pos, seek.getMax());
             }
             ui.postDelayed(this, 300);
         }
     };
+
+    private PlayerService svc() { return PlayerService.get(); }
+
+    @Override
+    protected void attachBaseContext(Context base) {
+        SharedPreferences p = base.getSharedPreferences("fable", Context.MODE_PRIVATE);
+        Locale loc = new Locale(p.getString("lang", "ru"));
+        Locale.setDefault(loc);
+        Configuration cfg = new Configuration(base.getResources().getConfiguration());
+        cfg.setLocale(loc);
+        super.attachBaseContext(base.createConfigurationContext(cfg));
+    }
 
     // ---------- Создание ----------
 
@@ -223,8 +181,9 @@ public class MainActivity extends Activity {
         setContentView(R.layout.activity_main);
 
         prefs = getSharedPreferences("fable", MODE_PRIVATE);
-        listenedMs = prefs.getLong("listened", 0);
         powerSave = prefs.getBoolean("powersave", false);
+        lang = prefs.getString("lang", "ru");
+        favs = new HashSet<>(prefs.getStringSet("favs", new HashSet<>()));
 
         defaultAccent = getColor(R.color.accent);
         textColor = getColor(R.color.text);
@@ -236,7 +195,6 @@ public class MainActivity extends Activity {
         setupList();
         setupControls();
         setupDrawer();
-        setupMediaSession();
         squareCover();
         loadPlaylists();
 
@@ -245,8 +203,13 @@ public class MainActivity extends Activity {
         rootFrame.setBackground(mainBg);
         applyThemeColors(accent, curDark);
 
+        startService(new Intent(this, PlayerService.class));
+        PlayerService.listener = this;
         ui.post(progressTick);
+
+        if (!prefs.getBoolean("setup_done", false)) showOnboarding();
         requestStartPermissions();
+        syncFromService();
     }
 
     private void requestStartPermissions() {
@@ -258,6 +221,29 @@ public class MainActivity extends Activity {
         }
         if (hasPermission()) loadTracks();
         if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), REQ_PERM);
+    }
+
+    /** После пересоздания (смена языка) подхватываем играющий трек из сервиса. */
+    private void syncFromService() {
+        PlayerService s = svc();
+        if (s == null) return;
+        repeatMode = s.repeatMode;
+        shuffle = s.shuffle;
+        updateToggleButtons();
+        Track t = s.current();
+        if (t != null) {
+            playingId = t.id;
+            npTitle.setText(t.title);
+            npArtist.setText(t.artist);
+            miniTitle.setText(t.title);
+            miniArtist.setText(t.artist);
+            seek.setMax((int) t.duration);
+            timeTotal.setText(formatTime((int) t.duration));
+            miniBar.setVisibility(View.VISIBLE);
+            setPlayingState(s.isPlaying());
+            updateFavButton();
+            loadCoverAndTheme(t);
+        }
     }
 
     private void bindViews() {
@@ -280,6 +266,7 @@ public class MainActivity extends Activity {
         miniCover = findViewById(R.id.mini_cover);
         bgA = findViewById(R.id.bg_a);
         bgB = findViewById(R.id.bg_b);
+        btnFav = findViewById(R.id.btn_fav);
         particles = findViewById(R.id.particles);
         npTitle = findViewById(R.id.np_title);
         npArtist = findViewById(R.id.np_artist);
@@ -313,7 +300,6 @@ public class MainActivity extends Activity {
             showTrackMenu(v, shownTracks.get(pos));
             return true;
         });
-
         if (!powerSave) setupListAnimation();
 
         searchBox.addTextChangedListener(new TextWatcher() {
@@ -338,20 +324,30 @@ public class MainActivity extends Activity {
         miniBar.setOnClickListener(v -> expandPlayer());
         findViewById(R.id.btn_collapse).setOnClickListener(v -> collapsePlayer());
         miniPlay.setOnClickListener(v -> togglePlay());
-        miniNext.setOnClickListener(v -> next(true));
+        miniNext.setOnClickListener(v -> { PlayerService s = svc(); if (s != null) s.next(true); });
         btnPlay.setOnClickListener(v -> togglePlay());
-        btnNext.setOnClickListener(v -> next(true));
-        btnPrev.setOnClickListener(v -> prev());
+        btnNext.setOnClickListener(v -> { PlayerService s = svc(); if (s != null) s.next(true); });
+        btnPrev.setOnClickListener(v -> { PlayerService s = svc(); if (s != null) s.prev(); });
         npCover.setOnClickListener(v -> togglePlay());
         btnRepeat.setOnClickListener(v -> {
             repeatMode = (repeatMode + 1) % 3;
+            PlayerService s = svc();
+            if (s != null) s.repeatMode = repeatMode;
             pulse(btnRepeat);
             updateToggleButtons();
         });
         btnShuffle.setOnClickListener(v -> {
             shuffle = !shuffle;
+            PlayerService s = svc();
+            if (s != null) s.shuffle = shuffle;
             pulse(btnShuffle);
             updateToggleButtons();
+        });
+        btnFav.setOnClickListener(v -> {
+            if (playingId >= 0) {
+                toggleFav(playingId);
+                pulse(btnFav);
+            }
         });
 
         findViewById(R.id.btn_menu).setOnClickListener(this::showMainMenu);
@@ -369,22 +365,10 @@ public class MainActivity extends Activity {
             @Override public void onStartTrackingTouch(SeekBar s) { userSeeking = true; }
             @Override public void onStopTrackingTouch(SeekBar s) {
                 userSeeking = false;
-                if (player != null) {
-                    try { player.seekTo(s.getProgress()); } catch (IllegalStateException ignored) { }
-                }
-                updatePlaybackState();
+                PlayerService sv = svc();
+                if (sv != null) sv.seekTo(s.getProgress());
             }
         });
-
-        IntentFilter f = new IntentFilter();
-        f.addAction(ACT_PREV);
-        f.addAction(ACT_PLAY);
-        f.addAction(ACT_NEXT);
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(mediaReceiver, f, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(mediaReceiver, f);
-        }
     }
 
     private void setupDrawer() {
@@ -400,105 +384,71 @@ public class MainActivity extends Activity {
                 openUrl("https://github.com/NickIBrody"));
     }
 
-    // ---------- Медиасессия: управление с экрана блокировки ----------
-
-    private void setupMediaSession() {
-        session = new MediaSession(this, "fable");
-        session.setCallback(new MediaSession.Callback() {
-            @Override public void onPlay() {
-                if (player != null && !player.isPlaying()) togglePlay();
-            }
-            @Override public void onPause() {
-                if (player != null && player.isPlaying()) togglePlay();
-            }
-            @Override public void onSkipToNext() { next(true); }
-            @Override public void onSkipToPrevious() { prev(); }
-            @Override public void onSeekTo(long pos) {
-                if (player != null) {
-                    try { player.seekTo((int) pos); } catch (IllegalStateException ignored) { }
-                }
-                updatePlaybackState();
-            }
-        });
-        session.setActive(true);
-    }
-
-    private void updateSessionMetadata(Track t, Bitmap art) {
-        if (session == null || t == null) return;
-        MediaMetadata.Builder b = new MediaMetadata.Builder()
-                .putString(MediaMetadata.METADATA_KEY_TITLE, t.title)
-                .putString(MediaMetadata.METADATA_KEY_ARTIST, t.artist)
-                .putLong(MediaMetadata.METADATA_KEY_DURATION, t.duration);
-        if (art != null) b.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art);
-        session.setMetadata(b.build());
-    }
-
-    private void updatePlaybackState() {
-        if (session == null) return;
-        boolean playing = false;
-        long pos = 0;
-        try {
-            if (player != null) {
-                playing = player.isPlaying();
-                pos = player.getCurrentPosition();
-            }
-        } catch (IllegalStateException ignored) { }
-        session.setPlaybackState(new PlaybackState.Builder()
-                .setActions(PlaybackState.ACTION_PLAY | PlaybackState.ACTION_PAUSE
-                        | PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_SEEK_TO
-                        | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS)
-                .setState(playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
-                        pos, playing ? 1f : 0f)
-                .build());
-    }
-
-    private PendingIntent mediaPi(String action, int req) {
-        Intent i = new Intent(action).setPackage(getPackageName());
-        return PendingIntent.getBroadcast(this, req, i,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-    }
-
-    private void updateMediaNotification() {
-        Track t = currentTrack();
-        if (t == null || session == null) return;
-        boolean playing = player != null && player.isPlaying();
-        NotificationManager nm = getSystemService(NotificationManager.class);
-        if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(CHANNEL_ID) == null) {
-            NotificationChannel ch = new NotificationChannel(CHANNEL_ID,
-                    getString(R.string.notif_channel), NotificationManager.IMPORTANCE_LOW);
-            ch.setShowBadge(false);
-            nm.createNotificationChannel(ch);
-        }
-        Notification.Builder nb = Build.VERSION.SDK_INT >= 26
-                ? new Notification.Builder(this, CHANNEL_ID)
-                : new Notification.Builder(this);
-        nb.setSmallIcon(R.drawable.ic_play)
-                .setContentTitle(t.title)
-                .setContentText(t.artist)
-                .setContentIntent(PendingIntent.getActivity(this, 10,
-                        new Intent(this, MainActivity.class),
-                        PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE))
-                .setVisibility(Notification.VISIBILITY_PUBLIC)
-                .setOngoing(playing)
-                .setOnlyAlertOnce(true)
-                .addAction(new Notification.Action.Builder(
-                        Icon.createWithResource(this, R.drawable.ic_prev),
-                        getString(R.string.btn_prev), mediaPi(ACT_PREV, 11)).build())
-                .addAction(new Notification.Action.Builder(
-                        Icon.createWithResource(this, playing ? R.drawable.ic_pause : R.drawable.ic_play),
-                        getString(R.string.btn_play), mediaPi(ACT_PLAY, 12)).build())
-                .addAction(new Notification.Action.Builder(
-                        Icon.createWithResource(this, R.drawable.ic_next),
-                        getString(R.string.btn_next), mediaPi(ACT_NEXT, 13)).build())
-                .setStyle(new Notification.MediaStyle()
-                        .setMediaSession(session.getSessionToken())
-                        .setShowActionsInCompactView(0, 1, 2));
-        if (lastArt != null) nb.setLargeIcon(lastArt);
-        try { nm.notify(NOTIF_ID, nb.build()); } catch (Exception ignored) { }
-    }
-
     private Track currentTrack() {
-        return (qIndex >= 0 && qIndex < queue.size()) ? queue.get(qIndex) : null;
+        PlayerService s = svc();
+        return s != null ? s.current() : null;
+    }
+
+    private void togglePlay() {
+        PlayerService s = svc();
+        if (s == null) return;
+        if (s.current() == null) {
+            if (!shownTracks.isEmpty()) playFromShown(0);
+            return;
+        }
+        s.togglePlay();
+    }
+
+    private void playFromShown(int pos) {
+        PlayerService s = svc();
+        if (s == null || pos < 0 || pos >= shownTracks.size()) return;
+        s.repeatMode = repeatMode;
+        s.shuffle = shuffle;
+        s.playQueue(new ArrayList<>(shownTracks), pos);
+    }
+
+    // ---------- Колбэки сервиса ----------
+
+    @Override
+    public void onTrackChanged(Track t) {
+        playingId = t.id;
+        npTitle.setText(t.title);
+        npArtist.setText(t.artist);
+        miniTitle.setText(t.title);
+        miniArtist.setText(t.artist);
+        seek.setMax((int) t.duration);
+        seek.setProgress(0);
+        timeNow.setText("0:00");
+        timeTotal.setText(formatTime((int) t.duration));
+        if (!expanded) showMiniBar();
+        updateFavButton();
+        adapter.notifyDataSetChanged();
+        loadCoverAndTheme(t);
+    }
+
+    @Override
+    public void onPlayState(boolean playing) {
+        setPlayingState(playing);
+    }
+
+    // ---------- Избранное ----------
+
+    private boolean isFav(long id) {
+        return favs.contains(String.valueOf(id));
+    }
+
+    private void toggleFav(long id) {
+        String k = String.valueOf(id);
+        if (!favs.remove(k)) favs.add(k);
+        prefs.edit().putStringSet("favs", new HashSet<>(favs)).apply();
+        updateFavButton();
+        if (favMode) refreshShown(false);
+    }
+
+    private void updateFavButton() {
+        boolean f = playingId >= 0 && isFav(playingId);
+        btnFav.setImageResource(f ? R.drawable.ic_heart_fill : R.drawable.ic_heart);
+        btnFav.setImageTintList(ColorStateList.valueOf(f ? accent : textColor));
     }
 
     /** Большая обложка всегда квадратная и вписана в доступное место. */
@@ -514,6 +464,78 @@ public class MainActivity extends Activity {
                 npCover.setLayoutParams(lp);
             }
         });
+    }
+
+    // ---------- Приветственный экран ----------
+
+    private void showOnboarding() {
+        onboardOpen = true;
+        final View ob = findViewById(R.id.onboard);
+        final TextView hi = findViewById(R.id.ob_hi);
+        final View card = findViewById(R.id.ob_card);
+        final TextView ru = findViewById(R.id.ob_lang_ru);
+        final TextView en = findViewById(R.id.ob_lang_en);
+        final Switch ps = findViewById(R.id.ob_ps);
+        final TextView start = findViewById(R.id.ob_start);
+        ob.setVisibility(View.VISIBLE);
+
+        // привет на разных языках, как при первом включении телефона
+        final String[] words = {"Привет", "Hello", "Hola", "Bonjour", "Ciao", "Olá", "Hallo", "こんにちは"};
+        final int[] idx = {0};
+        final Runnable[] cyc = new Runnable[1];
+        cyc[0] = () -> {
+            hi.animate().alpha(0f).setDuration(450).withEndAction(() -> {
+                idx[0] = (idx[0] + 1) % words.length;
+                hi.setText(words[idx[0]]);
+                hi.animate().alpha(1f).setDuration(450).start();
+            }).start();
+            ui.postDelayed(cyc[0], 2300);
+        };
+        ui.postDelayed(cyc[0], 1700);
+
+        card.setAlpha(0f);
+        card.setTranslationY(dp(90));
+        card.animate().alpha(1f).translationY(0)
+                .setDuration(750).setStartDelay(900)
+                .setInterpolator(new DecelerateInterpolator(2.2f))
+                .start();
+
+        final String[] chosen = {lang};
+        styleChip(ru, chosen[0].equals("ru"));
+        styleChip(en, chosen[0].equals("en"));
+        ru.setOnClickListener(v -> { chosen[0] = "ru"; styleChip(ru, true); styleChip(en, false); });
+        en.setOnClickListener(v -> { chosen[0] = "en"; styleChip(ru, false); styleChip(en, true); });
+        ps.setChecked(powerSave);
+        ps.setThumbTintList(ColorStateList.valueOf(accent));
+
+        GradientDrawable g = new GradientDrawable();
+        g.setCornerRadius(dp(16));
+        g.setColor(accent);
+        start.setBackground(g);
+
+        start.setOnClickListener(v -> {
+            ui.removeCallbacks(cyc[0]);
+            prefs.edit().putBoolean("setup_done", true)
+                    .putString("lang", chosen[0]).apply();
+            setPowerSave(ps.isChecked());
+            if (!chosen[0].equals(lang)) {
+                recreate();
+            } else {
+                onboardOpen = false;
+                ob.animate().alpha(0f).scaleX(1.06f).scaleY(1.06f)
+                        .setDuration(450)
+                        .withEndAction(() -> ob.setVisibility(View.GONE))
+                        .start();
+            }
+        });
+    }
+
+    private void styleChip(TextView c, boolean on) {
+        GradientDrawable g = new GradientDrawable();
+        g.setCornerRadius(dp(14));
+        g.setColor(on ? accent : 0x16FFFFFF);
+        c.setBackground(g);
+        c.setTextColor(on ? BG_BOTTOM : textColor);
     }
 
     // ---------- Размытие переходов (Android 12+) ----------
@@ -548,7 +570,6 @@ public class MainActivity extends Activity {
         return tv;
     }
 
-    /** Стилизованное всплывающее меню вместо системного PopupMenu. */
     private void showMenuPopup(View anchor, Object[][] items) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -597,7 +618,6 @@ public class MainActivity extends Activity {
         return tv;
     }
 
-    /** Стилизованный диалог в духе приложения (вместо системного AlertDialog). */
     private Dialog showStyledDialog(String title, View content,
                                     String posText, Runnable onPos,
                                     String negText, Runnable onNeg) {
@@ -667,29 +687,31 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
-        switch (ev.getActionMasked()) {
-            case MotionEvent.ACTION_DOWN:
-                swX = ev.getX();
-                swY = ev.getY();
-                swTracking = true;
-                break;
-            case MotionEvent.ACTION_MOVE:
-                if (swTracking) {
-                    float dx = ev.getX() - swX;
-                    float dy = ev.getY() - swY;
-                    if (Math.abs(dy) > dp(48) && Math.abs(dy) > Math.abs(dx)) {
-                        swTracking = false;
-                    } else if (!expanded && !drawerOpen
-                            && dx > dp(72) && Math.abs(dx) > Math.abs(dy) * 1.7f) {
-                        swTracking = false;
-                        openDrawer();
-                    } else if (drawerOpen
-                            && dx < -dp(72) && Math.abs(dx) > Math.abs(dy) * 1.7f) {
-                        swTracking = false;
-                        closeDrawer();
+        if (!onboardOpen) {
+            switch (ev.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    swX = ev.getX();
+                    swY = ev.getY();
+                    swTracking = true;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    if (swTracking) {
+                        float dx = ev.getX() - swX;
+                        float dy = ev.getY() - swY;
+                        if (Math.abs(dy) > dp(48) && Math.abs(dy) > Math.abs(dx)) {
+                            swTracking = false;
+                        } else if (!expanded && !drawerOpen
+                                && dx > dp(72) && Math.abs(dx) > Math.abs(dy) * 1.7f) {
+                            swTracking = false;
+                            openDrawer();
+                        } else if (drawerOpen
+                                && dx < -dp(72) && Math.abs(dx) > Math.abs(dy) * 1.7f) {
+                            swTracking = false;
+                            closeDrawer();
+                        }
                     }
-                }
-                break;
+                    break;
+            }
         }
         return super.dispatchTouchEvent(ev);
     }
@@ -720,15 +742,50 @@ public class MainActivity extends Activity {
         if (!expanded) blurMain(0f);
     }
 
-    /** Наполнение бокового меню: статистика + плейлисты. */
     private void buildDrawer() {
-        statTime.setText(formatListened(listenedMs));
+        PlayerService s = svc();
+        long listened = s != null ? s.listened() : prefs.getLong("listened", 0);
+        statTime.setText(formatListened(listened));
         statFav.setText(favoriteTitle());
         statCount.setText(allTracks.size() + " " + plural(allTracks.size()));
 
         playlistContainer.removeAllViews();
-        addPlaylistRow(null);
+        addLibraryRow(getString(R.string.all_music), allTracks.size(),
+                !favMode && activePlaylist == null, null, () -> {
+                    favMode = false;
+                    activePlaylist = null;
+                    refreshShown(true);
+                    closeDrawer();
+                });
+        addLibraryRow(getString(R.string.favorites), favs.size(),
+                favMode, "fav", () -> {
+                    favMode = true;
+                    activePlaylist = null;
+                    refreshShown(true);
+                    closeDrawer();
+                });
         for (Playlist p : playlists) addPlaylistRow(p);
+    }
+
+    private void addLibraryRow(String title, int count, boolean active,
+                               String icon, Runnable onClick) {
+        View row = getLayoutInflater().inflate(R.layout.item_playlist, playlistContainer, false);
+        TextView name = row.findViewById(R.id.pl_name);
+        TextView cnt = row.findViewById(R.id.pl_count);
+        ImageView img = row.findViewById(R.id.pl_cover);
+        roundCorners(img, dp(10));
+        name.setText(title);
+        name.setTextColor(active ? accent : textColor);
+        name.setTypeface(null, active ? Typeface.BOLD : Typeface.NORMAL);
+        cnt.setText(count + " " + plural(count));
+        if ("fav".equals(icon)) {
+            img.setImageResource(R.drawable.ic_heart_fill);
+            img.setImageTintList(ColorStateList.valueOf(accent));
+            img.setPadding(dp(10), dp(10), dp(10), dp(10));
+            img.setBackgroundColor(0x14FFFFFF);
+        }
+        row.setOnClickListener(v -> onClick.run());
+        playlistContainer.addView(row);
     }
 
     private void addPlaylistRow(final Playlist p) {
@@ -738,27 +795,23 @@ public class MainActivity extends Activity {
         ImageView img = row.findViewById(R.id.pl_cover);
         roundCorners(img, dp(10));
 
-        boolean isActive = (p == null && activePlaylist == null)
-                || (p != null && activePlaylist != null && p.id == activePlaylist.id);
-        int n = p == null ? allTracks.size() : p.ids.size();
-        name.setText(p == null ? getString(R.string.all_music) : p.name);
+        boolean isActive = !favMode && activePlaylist != null && p.id == activePlaylist.id;
+        name.setText(p.name);
         name.setTextColor(isActive ? accent : textColor);
         name.setTypeface(null, isActive ? Typeface.BOLD : Typeface.NORMAL);
-        count.setText(n + " " + plural(n));
+        count.setText(p.ids.size() + " " + plural(p.ids.size()));
 
-        if (p != null) {
-            File cf = playlistCoverFile(p.id);
-            if (cf.exists()) {
-                Bitmap bmp = decodeFileScaled(cf, 96);
-                if (bmp != null) img.setImageBitmap(bmp);
-            }
-            row.setOnLongClickListener(v -> {
-                showPlaylistMenu(v, p);
-                return true;
-            });
+        File cf = playlistCoverFile(p.id);
+        if (cf.exists()) {
+            Bitmap bmp = decodeFileScaled(cf, 96);
+            if (bmp != null) img.setImageBitmap(bmp);
         }
-
+        row.setOnLongClickListener(v -> {
+            showPlaylistMenu(v, p);
+            return true;
+        });
         row.setOnClickListener(v -> {
+            favMode = false;
             activePlaylist = p;
             refreshShown(true);
             closeDrawer();
@@ -929,6 +982,8 @@ public class MainActivity extends Activity {
 
     private void showTrackMenu(View anchor, final Track t) {
         ArrayList<Object[]> items = new ArrayList<>();
+        items.add(new Object[]{getString(isFav(t.id) ? R.string.fav_remove : R.string.fav_add),
+                (Runnable) () -> toggleFav(t.id)});
         items.add(new Object[]{getString(R.string.menu_set_cover), (Runnable) () -> {
             pendingCoverId = t.id;
             pickImage(REQ_PICK_COVER);
@@ -1111,12 +1166,16 @@ public class MainActivity extends Activity {
         refreshShown(false);
     }
 
-    /** Пересобирает видимый список: активный плейлист + поисковый запрос. */
     private void refreshShown(boolean animate) {
         shownTracks.clear();
         String q = searchBox.getText().toString().trim().toLowerCase(Locale.getDefault());
         ArrayList<Track> base;
-        if (activePlaylist == null) {
+        if (favMode) {
+            base = new ArrayList<>();
+            for (Track t : allTracks) {
+                if (isFav(t.id)) base.add(t);
+            }
+        } else if (activePlaylist == null) {
             base = allTracks;
         } else {
             base = new ArrayList<>();
@@ -1134,9 +1193,10 @@ public class MainActivity extends Activity {
             }
         }
 
-        listLabel.setText(activePlaylist == null
-                ? getString(R.string.my_music) : activePlaylist.name);
+        listLabel.setText(favMode ? getString(R.string.favorites)
+                : activePlaylist == null ? getString(R.string.my_music) : activePlaylist.name);
         if (!q.isEmpty()) empty.setText(R.string.no_results);
+        else if (favMode) empty.setText(R.string.empty_favs);
         else if (activePlaylist != null) empty.setText(R.string.empty_playlist);
         else empty.setText(R.string.no_tracks);
 
@@ -1163,8 +1223,8 @@ public class MainActivity extends Activity {
                 .start();
         mainScreen.animate().alpha(0.4f).scaleX(0.96f).scaleY(0.96f).setDuration(420).start();
         blurMain(1f);
-        particles.setRunning(!powerSave && player != null && player.isPlaying());
-        // мини-плеер прячется, чтобы не перекрывать кнопки плеера
+        PlayerService s = svc();
+        particles.setRunning(!powerSave && s != null && s.isPlaying());
         miniBar.animate().translationY(dp(140)).alpha(0f)
                 .setDuration(260)
                 .withEndAction(() -> miniBar.setVisibility(View.INVISIBLE))
@@ -1190,70 +1250,19 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (onboardOpen) return;
         if (drawerOpen) {
             closeDrawer();
         } else if (expanded) {
             collapsePlayer();
         } else {
             showStyledDialog(getString(R.string.exit_q), null,
-                    getString(R.string.exit_yes), this::finish,
+                    getString(R.string.exit_yes), () -> {
+                        stopService(new Intent(this, PlayerService.class));
+                        finish();
+                    },
                     getString(R.string.exit_no), null);
         }
-    }
-
-    // ---------- Воспроизведение ----------
-
-    private void playFromShown(int pos) {
-        if (pos < 0 || pos >= shownTracks.size()) return;
-        queue.clear();
-        queue.addAll(shownTracks);
-        startTrack(pos);
-    }
-
-    private void startTrack(int index) {
-        if (index < 0 || index >= queue.size()) return;
-        Track t = queue.get(index);
-        qIndex = index;
-        playingId = t.id;
-
-        if (player != null) {
-            player.release();
-            player = null;
-        }
-        player = new MediaPlayer();
-        player.setAudioAttributes(new AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build());
-        player.setOnCompletionListener(mp -> onTrackFinished());
-        try {
-            player.setDataSource(this, trackUri(t));
-            player.prepare();
-            player.start();
-        } catch (Exception e) {
-            player.release();
-            player = null;
-            return;
-        }
-
-        setupAudioFx();
-        applySpeed();
-        prefs.edit().putInt("pc_" + t.id, prefs.getInt("pc_" + t.id, 0) + 1).apply();
-
-        npTitle.setText(t.title);
-        npArtist.setText(t.artist);
-        miniTitle.setText(t.title);
-        miniArtist.setText(t.artist);
-        seek.setMax((int) t.duration);
-        seek.setProgress(0);
-        timeNow.setText("0:00");
-        timeTotal.setText(formatTime((int) t.duration));
-        lastArt = null;
-        updateSessionMetadata(t, null);
-        setPlayingState(true);
-        if (!expanded) showMiniBar();
-        adapter.notifyDataSetChanged();
-        loadCoverAndTheme(t);
     }
 
     private void showMiniBar() {
@@ -1265,20 +1274,6 @@ public class MainActivity extends Activity {
                     .setDuration(450)
                     .setInterpolator(new OvershootInterpolator(0.9f))
                     .start();
-        }
-    }
-
-    private void togglePlay() {
-        if (player == null) {
-            if (!shownTracks.isEmpty()) playFromShown(0);
-            return;
-        }
-        if (player.isPlaying()) {
-            player.pause();
-            setPlayingState(false);
-        } else {
-            player.start();
-            setPlayingState(true);
         }
     }
 
@@ -1299,56 +1294,6 @@ public class MainActivity extends Activity {
                 .setInterpolator(new DecelerateInterpolator(2f))
                 .start();
         if (expanded) particles.setRunning(playing && !powerSave);
-        updatePlaybackState();
-        updateMediaNotification();
-    }
-
-    private void next(boolean byUser) {
-        if (queue.isEmpty()) return;
-        int n;
-        if (shuffle && queue.size() > 1) {
-            do { n = random.nextInt(queue.size()); } while (n == qIndex);
-        } else {
-            n = qIndex + 1;
-            if (n >= queue.size()) {
-                if (repeatMode == REPEAT_ALL || byUser) n = 0;
-                else { stopAtEnd(); return; }
-            }
-        }
-        startTrack(n);
-    }
-
-    private void prev() {
-        if (queue.isEmpty()) return;
-        if (player != null && player.getCurrentPosition() > 4000) {
-            player.seekTo(0);
-            updatePlaybackState();
-            return;
-        }
-        int n = qIndex - 1;
-        if (n < 0) n = queue.size() - 1;
-        startTrack(n);
-    }
-
-    private void onTrackFinished() {
-        if (repeatMode == REPEAT_ONE && player != null) {
-            player.seekTo(0);
-            player.start();
-            updatePlaybackState();
-        } else {
-            next(false);
-        }
-    }
-
-    private void stopAtEnd() {
-        if (player != null) {
-            player.pause();
-            player.seekTo(0);
-        }
-        seek.setProgress(0);
-        timeNow.setText("0:00");
-        updateMiniProgress(0, seek.getMax());
-        setPlayingState(false);
     }
 
     private void updateMiniProgress(int pos, int max) {
@@ -1369,17 +1314,15 @@ public class MainActivity extends Activity {
             final Bitmap blurBmp = art != null ? blurBitmap(art) : null;
             ui.post(() -> {
                 if (playingId != id) return;
-                lastArt = art;
                 swapCover(art);
                 swapBackground(blurBmp);
                 animateTheme(color);
-                updateSessionMetadata(t, art);
-                updateMediaNotification();
+                PlayerService s = svc();
+                if (s != null) s.setArt(art);
             });
         });
     }
 
-    /** Смена обложки с лёгким fade + «пружинным» появлением. */
     private void swapCover(Bitmap art) {
         npCover.animate().alpha(0f).scaleX(0.9f).scaleY(0.9f)
                 .setDuration(150)
@@ -1391,9 +1334,10 @@ public class MainActivity extends Activity {
                         npCover.setImageResource(R.drawable.ic_track_placeholder);
                         miniCover.setImageResource(R.drawable.ic_track_placeholder);
                     }
-                    boolean playing = player != null && player.isPlaying();
-                    float s = playing ? 1f : 0.93f;
-                    npCover.animate().alpha(1f).scaleX(s).scaleY(s)
+                    PlayerService s = svc();
+                    boolean playing = s != null && s.isPlaying();
+                    float sc = playing ? 1f : 0.93f;
+                    npCover.animate().alpha(1f).scaleX(sc).scaleY(sc)
                             .setDuration(420)
                             .setInterpolator(new OvershootInterpolator(1.1f))
                             .start();
@@ -1401,7 +1345,6 @@ public class MainActivity extends Activity {
                 .start();
     }
 
-    /** Кроссфейд размытого фона между двумя слоями. */
     private void swapBackground(Bitmap blurBmp) {
         if (blurBmp == null) {
             bgA.animate().alpha(0f).setDuration(700).start();
@@ -1416,7 +1359,6 @@ public class MainActivity extends Activity {
         hide.animate().alpha(0f).setDuration(750).start();
     }
 
-    /** «Размытие» через уменьшение до 26px и растягивание с фильтрацией. */
     private Bitmap blurBitmap(Bitmap src) {
         int h = Math.max(1, (int) (26f * src.getHeight() / src.getWidth()));
         return Bitmap.createScaledBitmap(src, 26, h, true);
@@ -1459,8 +1401,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Доминирующий «живой» цвет: пиксели группируются по тону,
-     *  побеждает группа с наибольшим весом (насыщенность × близость к средней яркости). */
     private int extractAccent(Bitmap src) {
         Bitmap b = Bitmap.createScaledBitmap(src, 24, 24, true);
         float[] hsv = new float[3];
@@ -1492,7 +1432,6 @@ public class MainActivity extends Activity {
         return Color.HSVToColor(hsv);
     }
 
-    /** Плавный перелив всей темы в цвет новой обложки. */
     private void animateTheme(int toAccent) {
         if (powerSave) {
             applyThemeColors(toAccent, blend(toAccent, BG_BOTTOM, 0.80f));
@@ -1546,12 +1485,14 @@ public class MainActivity extends Activity {
         headerTitle.invalidate();
 
         updateToggleButtons();
+        updateFavButton();
     }
 
     private void updateToggleButtons() {
-        btnRepeat.setImageResource(repeatMode == REPEAT_ONE
+        btnRepeat.setImageResource(repeatMode == PlayerService.REPEAT_ONE
                 ? R.drawable.ic_repeat_one : R.drawable.ic_repeat);
-        btnRepeat.setImageTintList(ColorStateList.valueOf(repeatMode != REPEAT_OFF ? accent : dimColor));
+        btnRepeat.setImageTintList(ColorStateList.valueOf(
+                repeatMode != PlayerService.REPEAT_OFF ? accent : dimColor));
         btnShuffle.setImageTintList(ColorStateList.valueOf(shuffle ? accent : dimColor));
     }
 
@@ -1572,56 +1513,10 @@ public class MainActivity extends Activity {
                 (int) (Color.blue(c1) * r + Color.blue(c2) * ratio));
     }
 
-    // ---------- Эквалайзер, скорость, энергосбережение ----------
-
-    /** Эффекты привязываются к каждому новому MediaPlayer — настройки общие для всех треков. */
-    private void setupAudioFx() {
-        releaseFx();
-        if (player == null) return;
-        int sid;
-        try { sid = player.getAudioSessionId(); } catch (Exception e) { return; }
-        try {
-            eq = new Equalizer(0, sid);
-            eq.setEnabled(true);
-            short[] r = eq.getBandLevelRange();
-            short n = eq.getNumberOfBands();
-            for (short i = 0; i < n; i++) {
-                float v = prefs.getFloat("eq_b" + i, 0.5f);
-                eq.setBandLevel(i, (short) (r[0] + (r[1] - r[0]) * v));
-            }
-        } catch (Exception e) { eq = null; }
-        try {
-            bass = new BassBoost(0, sid);
-            bass.setEnabled(true);
-            bass.setStrength((short) (prefs.getFloat("eq_bass", 0f) * 1000));
-        } catch (Exception e) { bass = null; }
-        try {
-            virt = new Virtualizer(0, sid);
-            virt.setEnabled(true);
-            virt.setStrength((short) (prefs.getFloat("eq_virt", 0f) * 1000));
-        } catch (Exception e) { virt = null; }
-    }
-
-    private void releaseFx() {
-        if (eq != null) { try { eq.release(); } catch (Exception ignored) { } eq = null; }
-        if (bass != null) { try { bass.release(); } catch (Exception ignored) { } bass = null; }
-        if (virt != null) { try { virt.release(); } catch (Exception ignored) { } virt = null; }
-    }
-
-    private void applySpeed() {
-        if (player == null) return;
-        float sp = prefs.getFloat("speed", 1f);
-        try {
-            if (player.isPlaying()) {
-                PlaybackParams pp = player.getPlaybackParams();
-                player.setPlaybackParams(pp.setSpeed(sp));
-            }
-        } catch (Exception ignored) { }
-    }
+    // ---------- Эквалайзер, скорость, настройки ----------
 
     private interface FloatSetter { void set(float v); }
 
-    /** Строка эффекта: подпись + ползунок 0..1 в цвете темы. */
     private View fxRow(String label, float init, final FloatSetter cb) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
@@ -1655,57 +1550,38 @@ public class MainActivity extends Activity {
     }
 
     private String freqLabel(int hz) {
-        return hz < 1000 ? hz + " Гц"
-                : String.format(Locale.US, "%.1f кГц", hz / 1000f).replace(".0", "");
+        return hz < 1000 ? hz + " " + (lang.equals("en") ? "Hz" : "Гц")
+                : String.format(Locale.US, "%.1f %s", hz / 1000f,
+                        lang.equals("en") ? "kHz" : "кГц").replace(".0 ", " ");
     }
 
-    /** Компактный эквалайзер: полосы устройства + бас + объём + скорость. */
     private void showEqDialog() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
+        final PlayerService s = svc();
 
-        short nBands = 0;
-        int[] freqs = null;
-        if (eq != null) {
-            try {
-                nBands = eq.getNumberOfBands();
-                freqs = new int[nBands];
-                for (short i = 0; i < nBands; i++) freqs[i] = eq.getCenterFreq(i) / 1000;
-            } catch (Exception e) { freqs = null; }
-        }
-        if (freqs == null) {
-            nBands = 5;
-            freqs = new int[]{60, 230, 910, 3600, 14000};
-        }
-        for (short i = 0; i < nBands && i < 8; i++) {
-            final short band = i;
+        int[] freqs = s != null ? s.bandFreqs() : null;
+        if (freqs == null) freqs = new int[]{60, 230, 910, 3600, 14000};
+        int nBands = Math.min(freqs.length, 8);
+        for (int i = 0; i < nBands; i++) {
+            final short band = (short) i;
             content.addView(fxRow(freqLabel(freqs[i]),
                     prefs.getFloat("eq_b" + i, 0.5f), v -> {
                         prefs.edit().putFloat("eq_b" + band, v).apply();
-                        if (eq != null) {
-                            try {
-                                short[] r = eq.getBandLevelRange();
-                                eq.setBandLevel(band, (short) (r[0] + (r[1] - r[0]) * v));
-                            } catch (Exception ignored) { }
-                        }
+                        if (s != null) s.setBandLevel(band, v);
                     }));
         }
         content.addView(fxRow(getString(R.string.bass),
                 prefs.getFloat("eq_bass", 0f), v -> {
                     prefs.edit().putFloat("eq_bass", v).apply();
-                    if (bass != null) {
-                        try { bass.setStrength((short) (v * 1000)); } catch (Exception ignored) { }
-                    }
+                    if (s != null) s.setBassStrength(v);
                 }));
         content.addView(fxRow(getString(R.string.surround),
                 prefs.getFloat("eq_virt", 0f), v -> {
                     prefs.edit().putFloat("eq_virt", v).apply();
-                    if (virt != null) {
-                        try { virt.setStrength((short) (v * 1000)); } catch (Exception ignored) { }
-                    }
+                    if (s != null) s.setVirtStrength(v);
                 }));
 
-        // Скорость: 0.5x–2.0x с шагом 0.05
         LinearLayout spHead = new LinearLayout(this);
         spHead.setOrientation(LinearLayout.HORIZONTAL);
         TextView spLabel = new TextView(this);
@@ -1730,15 +1606,15 @@ public class MainActivity extends Activity {
         spBar.setProgressTintList(ColorStateList.valueOf(accent));
         spBar.setThumbTintList(ColorStateList.valueOf(accent));
         spBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+            @Override public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
                 if (!fromUser) return;
                 float sp = 0.5f + p * 0.05f;
                 spVal.setText(String.format(Locale.US, "  %.2fx", sp));
                 prefs.edit().putFloat("speed", sp).apply();
-                applySpeed();
+                if (s != null) s.applySpeed();
             }
-            @Override public void onStartTrackingTouch(SeekBar s) { }
-            @Override public void onStopTrackingTouch(SeekBar s) { }
+            @Override public void onStartTrackingTouch(SeekBar sb) { }
+            @Override public void onStopTrackingTouch(SeekBar sb) { }
         });
         content.addView(spBar);
 
@@ -1761,12 +1637,10 @@ public class MainActivity extends Activity {
                     for (int i = 0; i < 8; i++) e.putFloat("eq_b" + i, 0.5f);
                     e.putFloat("eq_bass", 0f).putFloat("eq_virt", 0f)
                             .putFloat("speed", 1f).apply();
-                    setupAudioFx();
-                    applySpeed();
+                    if (s != null) s.refreshFx();
                 });
     }
 
-    /** Настройки: энергосбережение + версия со ссылкой на исходники. */
     private void showSettingsDialog() {
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -1797,6 +1671,51 @@ public class MainActivity extends Activity {
         psRow.addView(sw);
         content.addView(psRow);
 
+        // язык
+        TextView langLabel = new TextView(this);
+        langLabel.setText(R.string.language);
+        langLabel.setTextColor(dimColor);
+        langLabel.setTextSize(11.5f);
+        langLabel.setAllCaps(true);
+        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        llp.topMargin = dp(18);
+        content.addView(langLabel, llp);
+        LinearLayout langRow = new LinearLayout(this);
+        langRow.setOrientation(LinearLayout.HORIZONTAL);
+        final TextView ru = new TextView(this);
+        final TextView en = new TextView(this);
+        for (TextView c : new TextView[]{ru, en}) {
+            c.setTextSize(14f);
+            c.setTypeface(null, Typeface.BOLD);
+            c.setGravity(Gravity.CENTER);
+            c.setPadding(0, dp(10), 0, dp(10));
+        }
+        ru.setText(R.string.lang_ru);
+        en.setText(R.string.lang_en);
+        styleChip(ru, lang.equals("ru"));
+        styleChip(en, lang.equals("en"));
+        View.OnClickListener pick = v -> {
+            String chosen = v == ru ? "ru" : "en";
+            if (!chosen.equals(lang)) {
+                prefs.edit().putString("lang", chosen).apply();
+                recreate();
+            }
+        };
+        ru.setOnClickListener(pick);
+        en.setOnClickListener(pick);
+        LinearLayout.LayoutParams c1 = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        c1.rightMargin = dp(8);
+        LinearLayout.LayoutParams c2 = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        langRow.addView(ru, c1);
+        langRow.addView(en, c2);
+        LinearLayout.LayoutParams lrl = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lrl.topMargin = dp(8);
+        content.addView(langRow, lrl);
+
         TextView ver = new TextView(this);
         ver.setText(R.string.version_link);
         ver.setTextColor(dimColor);
@@ -1825,8 +1744,9 @@ public class MainActivity extends Activity {
             blurAmt = 0f;
         } else {
             setupListAnimation();
+            PlayerService s = svc();
             if (expanded) {
-                particles.setRunning(player != null && player.isPlaying());
+                particles.setRunning(s != null && s.isPlaying());
                 blurMain(1f);
             } else if (drawerOpen) {
                 blurMain(0.6f);
@@ -1836,15 +1756,12 @@ public class MainActivity extends Activity {
 
     // ---------- Статистика ----------
 
-    private void saveStats() {
-        prefs.edit().putLong("listened", listenedMs).apply();
-    }
-
     private String formatListened(long ms) {
         long min = ms / 60000;
         long h = min / 60;
         min %= 60;
-        return h > 0 ? h + " ч " + min + " мин" : min + " мин";
+        String hs = getString(R.string.h_short), m = getString(R.string.m_short);
+        return h > 0 ? h + " " + hs + " " + min + " " + m : min + " " + m;
     }
 
     private String favoriteTitle() {
@@ -1860,7 +1777,8 @@ public class MainActivity extends Activity {
         return best == null ? "—" : best.title;
     }
 
-    private static String plural(int n) {
+    private String plural(int n) {
+        if (lang.equals("en")) return n == 1 ? "track" : "tracks";
         int m10 = n % 10, m100 = n % 100;
         if (m10 == 1 && m100 != 11) return "трек";
         if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return "трека";
@@ -1941,31 +1859,12 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    protected void onPause() {
-        super.onPause();
-        saveStats();
-    }
-
-    @Override
     protected void onDestroy() {
         super.onDestroy();
-        saveStats();
         ui.removeCallbacksAndMessages(null);
         if (themeAnim != null) themeAnim.cancel();
         if (blurAnim != null) blurAnim.cancel();
         exec.shutdownNow();
-        try { unregisterReceiver(mediaReceiver); } catch (Exception ignored) { }
-        NotificationManager nm = getSystemService(NotificationManager.class);
-        if (nm != null) nm.cancel(NOTIF_ID);
-        if (session != null) {
-            session.setActive(false);
-            session.release();
-            session = null;
-        }
-        releaseFx();
-        if (player != null) {
-            player.release();
-            player = null;
-        }
+        if (PlayerService.listener == this) PlayerService.listener = null;
     }
 }
