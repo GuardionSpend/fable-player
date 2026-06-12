@@ -33,6 +33,10 @@ import android.media.AudioAttributes;
 import android.media.MediaMetadata;
 import android.media.MediaMetadataRetriever;
 import android.media.MediaPlayer;
+import android.media.PlaybackParams;
+import android.media.audiofx.BassBoost;
+import android.media.audiofx.Equalizer;
+import android.media.audiofx.Virtualizer;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 import android.net.Uri;
@@ -66,7 +70,9 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.PopupWindow;
+import android.widget.ScrollView;
 import android.widget.SeekBar;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -156,6 +162,12 @@ public class MainActivity extends Activity {
     private MediaSession session;
     private Bitmap lastArt;
 
+    // Эквалайзер, эффекты, энергосбережение
+    private Equalizer eq;
+    private BassBoost bass;
+    private Virtualizer virt;
+    private boolean powerSave;
+
     // Вьюхи
     private View rootFrame, mainScreen, nowPlaying, miniBar, miniProgress;
     private View drawerLayer, drawer, drawerDim;
@@ -212,6 +224,7 @@ public class MainActivity extends Activity {
 
         prefs = getSharedPreferences("fable", MODE_PRIVATE);
         listenedMs = prefs.getLong("listened", 0);
+        powerSave = prefs.getBoolean("powersave", false);
 
         defaultAccent = getColor(R.color.accent);
         textColor = getColor(R.color.text);
@@ -301,6 +314,16 @@ public class MainActivity extends Activity {
             return true;
         });
 
+        if (!powerSave) setupListAnimation();
+
+        searchBox.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(Editable s) { refreshShown(false); }
+        });
+    }
+
+    private void setupListAnimation() {
         AnimationSet in = new AnimationSet(true);
         in.setInterpolator(new DecelerateInterpolator(2f));
         in.setDuration(380);
@@ -309,12 +332,6 @@ public class MainActivity extends Activity {
                 TranslateAnimation.RELATIVE_TO_SELF, 0f, TranslateAnimation.RELATIVE_TO_SELF, 0f,
                 TranslateAnimation.RELATIVE_TO_SELF, 0.35f, TranslateAnimation.RELATIVE_TO_SELF, 0f));
         list.setLayoutAnimation(new LayoutAnimationController(in, 0.045f));
-
-        searchBox.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
-            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
-            @Override public void afterTextChanged(Editable s) { refreshShown(false); }
-        });
     }
 
     private void setupControls() {
@@ -338,6 +355,7 @@ public class MainActivity extends Activity {
         });
 
         findViewById(R.id.btn_menu).setOnClickListener(this::showMainMenu);
+        findViewById(R.id.btn_eq).setOnClickListener(v -> showEqDialog());
         findViewById(R.id.btn_np_menu).setOnClickListener(v -> {
             Track t = currentTrack();
             if (t != null) showTrackMenu(v, t);
@@ -501,7 +519,7 @@ public class MainActivity extends Activity {
     // ---------- Размытие переходов (Android 12+) ----------
 
     private void blurMain(float to) {
-        if (Build.VERSION.SDK_INT < 31) return;
+        if (Build.VERSION.SDK_INT < 31 || powerSave) return;
         if (blurAnim != null) blurAnim.cancel();
         blurAnim = ValueAnimator.ofFloat(blurAmt, to);
         blurAnim.setDuration(400);
@@ -581,7 +599,8 @@ public class MainActivity extends Activity {
 
     /** Стилизованный диалог в духе приложения (вместо системного AlertDialog). */
     private Dialog showStyledDialog(String title, View content,
-                                    String posText, Runnable onPos, String negText) {
+                                    String posText, Runnable onPos,
+                                    String negText, Runnable onNeg) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setBackgroundResource(R.drawable.bg_menu);
@@ -608,7 +627,10 @@ public class MainActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.END);
         TextView neg = dialogButton(negText != null ? negText : getString(R.string.cancel), dimColor);
-        neg.setOnClickListener(v -> d.dismiss());
+        neg.setOnClickListener(v -> {
+            d.dismiss();
+            if (onNeg != null) onNeg.run();
+        });
         row.addView(neg);
         if (posText != null) {
             TextView pos = dialogButton(posText, accent);
@@ -845,7 +867,7 @@ public class MainActivity extends Activity {
         showStyledDialog(title, et, getString(R.string.done), () -> {
             String name = et.getText().toString().trim();
             if (!name.isEmpty()) cb.onName(name);
-        }, null);
+        }, null, null);
         et.requestFocus();
     }
 
@@ -870,7 +892,7 @@ public class MainActivity extends Activity {
                     addTrackTo(createPlaylist(name), t));
         });
         listBox.addView(create);
-        ref[0] = showStyledDialog(getString(R.string.add_to_playlist), listBox, null, null, null);
+        ref[0] = showStyledDialog(getString(R.string.add_to_playlist), listBox, null, null, null, null);
     }
 
     private void addTrackTo(Playlist p, Track t) {
@@ -899,6 +921,8 @@ public class MainActivity extends Activity {
                             Toast.makeText(this, getString(R.string.toast_added) + " · " + name,
                                     Toast.LENGTH_SHORT).show();
                         })},
+                {getString(R.string.eq_title), (Runnable) this::showEqDialog},
+                {getString(R.string.settings), (Runnable) this::showSettingsDialog},
                 {getString(R.string.menu_author), (Runnable) this::openTelegram, true},
         });
     }
@@ -1139,7 +1163,7 @@ public class MainActivity extends Activity {
                 .start();
         mainScreen.animate().alpha(0.4f).scaleX(0.96f).scaleY(0.96f).setDuration(420).start();
         blurMain(1f);
-        particles.setRunning(player != null && player.isPlaying());
+        particles.setRunning(!powerSave && player != null && player.isPlaying());
         // мини-плеер прячется, чтобы не перекрывать кнопки плеера
         miniBar.animate().translationY(dp(140)).alpha(0f)
                 .setDuration(260)
@@ -1173,7 +1197,7 @@ public class MainActivity extends Activity {
         } else {
             showStyledDialog(getString(R.string.exit_q), null,
                     getString(R.string.exit_yes), this::finish,
-                    getString(R.string.exit_no));
+                    getString(R.string.exit_no), null);
         }
     }
 
@@ -1212,6 +1236,8 @@ public class MainActivity extends Activity {
             return;
         }
 
+        setupAudioFx();
+        applySpeed();
         prefs.edit().putInt("pc_" + t.id, prefs.getInt("pc_" + t.id, 0) + 1).apply();
 
         npTitle.setText(t.title);
@@ -1272,7 +1298,7 @@ public class MainActivity extends Activity {
                 .setDuration(380)
                 .setInterpolator(new DecelerateInterpolator(2f))
                 .start();
-        if (expanded) particles.setRunning(playing);
+        if (expanded) particles.setRunning(playing && !powerSave);
         updatePlaybackState();
         updateMediaNotification();
     }
@@ -1468,6 +1494,11 @@ public class MainActivity extends Activity {
 
     /** Плавный перелив всей темы в цвет новой обложки. */
     private void animateTheme(int toAccent) {
+        if (powerSave) {
+            applyThemeColors(toAccent, blend(toAccent, BG_BOTTOM, 0.80f));
+            adapter.notifyDataSetChanged();
+            return;
+        }
         final int fa = accent, fd = curDark;
         final int ta = toAccent, td = blend(toAccent, BG_BOTTOM, 0.80f);
         if (themeAnim != null) themeAnim.cancel();
@@ -1539,6 +1570,268 @@ public class MainActivity extends Activity {
                 (int) (Color.red(c1) * r + Color.red(c2) * ratio),
                 (int) (Color.green(c1) * r + Color.green(c2) * ratio),
                 (int) (Color.blue(c1) * r + Color.blue(c2) * ratio));
+    }
+
+    // ---------- Эквалайзер, скорость, энергосбережение ----------
+
+    /** Эффекты привязываются к каждому новому MediaPlayer — настройки общие для всех треков. */
+    private void setupAudioFx() {
+        releaseFx();
+        if (player == null) return;
+        int sid;
+        try { sid = player.getAudioSessionId(); } catch (Exception e) { return; }
+        try {
+            eq = new Equalizer(0, sid);
+            eq.setEnabled(true);
+            short[] r = eq.getBandLevelRange();
+            short n = eq.getNumberOfBands();
+            for (short i = 0; i < n; i++) {
+                float v = prefs.getFloat("eq_b" + i, 0.5f);
+                eq.setBandLevel(i, (short) (r[0] + (r[1] - r[0]) * v));
+            }
+        } catch (Exception e) { eq = null; }
+        try {
+            bass = new BassBoost(0, sid);
+            bass.setEnabled(true);
+            bass.setStrength((short) (prefs.getFloat("eq_bass", 0f) * 1000));
+        } catch (Exception e) { bass = null; }
+        try {
+            virt = new Virtualizer(0, sid);
+            virt.setEnabled(true);
+            virt.setStrength((short) (prefs.getFloat("eq_virt", 0f) * 1000));
+        } catch (Exception e) { virt = null; }
+    }
+
+    private void releaseFx() {
+        if (eq != null) { try { eq.release(); } catch (Exception ignored) { } eq = null; }
+        if (bass != null) { try { bass.release(); } catch (Exception ignored) { } bass = null; }
+        if (virt != null) { try { virt.release(); } catch (Exception ignored) { } virt = null; }
+    }
+
+    private void applySpeed() {
+        if (player == null) return;
+        float sp = prefs.getFloat("speed", 1f);
+        try {
+            if (player.isPlaying()) {
+                PlaybackParams pp = player.getPlaybackParams();
+                player.setPlaybackParams(pp.setSpeed(sp));
+            }
+        } catch (Exception ignored) { }
+    }
+
+    private interface FloatSetter { void set(float v); }
+
+    /** Строка эффекта: подпись + ползунок 0..1 в цвете темы. */
+    private View fxRow(String label, float init, final FloatSetter cb) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView l = new TextView(this);
+        l.setText(label);
+        l.setTextColor(dimColor);
+        l.setTextSize(12.5f);
+        l.setWidth(dp(70));
+        row.addView(l);
+        SeekBar sb = new SeekBar(this);
+        sb.setMax(100);
+        sb.setProgress(Math.round(init * 100));
+        sb.setProgressTintList(ColorStateList.valueOf(accent));
+        sb.setThumbTintList(ColorStateList.valueOf(accent));
+        sb.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                if (fromUser) cb.set(p / 100f);
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) { }
+            @Override public void onStopTrackingTouch(SeekBar s) { }
+        });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        row.addView(sb, lp);
+        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rlp.topMargin = dp(2);
+        row.setLayoutParams(rlp);
+        return row;
+    }
+
+    private String freqLabel(int hz) {
+        return hz < 1000 ? hz + " Гц"
+                : String.format(Locale.US, "%.1f кГц", hz / 1000f).replace(".0", "");
+    }
+
+    /** Компактный эквалайзер: полосы устройства + бас + объём + скорость. */
+    private void showEqDialog() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+
+        short nBands = 0;
+        int[] freqs = null;
+        if (eq != null) {
+            try {
+                nBands = eq.getNumberOfBands();
+                freqs = new int[nBands];
+                for (short i = 0; i < nBands; i++) freqs[i] = eq.getCenterFreq(i) / 1000;
+            } catch (Exception e) { freqs = null; }
+        }
+        if (freqs == null) {
+            nBands = 5;
+            freqs = new int[]{60, 230, 910, 3600, 14000};
+        }
+        for (short i = 0; i < nBands && i < 8; i++) {
+            final short band = i;
+            content.addView(fxRow(freqLabel(freqs[i]),
+                    prefs.getFloat("eq_b" + i, 0.5f), v -> {
+                        prefs.edit().putFloat("eq_b" + band, v).apply();
+                        if (eq != null) {
+                            try {
+                                short[] r = eq.getBandLevelRange();
+                                eq.setBandLevel(band, (short) (r[0] + (r[1] - r[0]) * v));
+                            } catch (Exception ignored) { }
+                        }
+                    }));
+        }
+        content.addView(fxRow(getString(R.string.bass),
+                prefs.getFloat("eq_bass", 0f), v -> {
+                    prefs.edit().putFloat("eq_bass", v).apply();
+                    if (bass != null) {
+                        try { bass.setStrength((short) (v * 1000)); } catch (Exception ignored) { }
+                    }
+                }));
+        content.addView(fxRow(getString(R.string.surround),
+                prefs.getFloat("eq_virt", 0f), v -> {
+                    prefs.edit().putFloat("eq_virt", v).apply();
+                    if (virt != null) {
+                        try { virt.setStrength((short) (v * 1000)); } catch (Exception ignored) { }
+                    }
+                }));
+
+        // Скорость: 0.5x–2.0x с шагом 0.05
+        LinearLayout spHead = new LinearLayout(this);
+        spHead.setOrientation(LinearLayout.HORIZONTAL);
+        TextView spLabel = new TextView(this);
+        spLabel.setText(getString(R.string.speed));
+        spLabel.setTextColor(dimColor);
+        spLabel.setTextSize(12.5f);
+        final TextView spVal = new TextView(this);
+        float spInit = prefs.getFloat("speed", 1f);
+        spVal.setText(String.format(Locale.US, "  %.2fx", spInit));
+        spVal.setTextColor(accent);
+        spVal.setTextSize(12.5f);
+        spVal.setTypeface(null, Typeface.BOLD);
+        spHead.addView(spLabel);
+        spHead.addView(spVal);
+        LinearLayout.LayoutParams shlp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        shlp.topMargin = dp(10);
+        content.addView(spHead, shlp);
+        SeekBar spBar = new SeekBar(this);
+        spBar.setMax(30);
+        spBar.setProgress(Math.round((spInit - 0.5f) / 0.05f));
+        spBar.setProgressTintList(ColorStateList.valueOf(accent));
+        spBar.setThumbTintList(ColorStateList.valueOf(accent));
+        spBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar s, int p, boolean fromUser) {
+                if (!fromUser) return;
+                float sp = 0.5f + p * 0.05f;
+                spVal.setText(String.format(Locale.US, "  %.2fx", sp));
+                prefs.edit().putFloat("speed", sp).apply();
+                applySpeed();
+            }
+            @Override public void onStartTrackingTouch(SeekBar s) { }
+            @Override public void onStopTrackingTouch(SeekBar s) { }
+        });
+        content.addView(spBar);
+
+        ScrollView sc = new ScrollView(this);
+        sc.setVerticalScrollBarEnabled(false);
+        sc.addView(content);
+        final int maxH = getResources().getDisplayMetrics().heightPixels * 55 / 100;
+        sc.post(() -> {
+            if (sc.getHeight() > maxH) {
+                ViewGroup.LayoutParams lp = sc.getLayoutParams();
+                lp.height = maxH;
+                sc.setLayoutParams(lp);
+            }
+        });
+
+        showStyledDialog(getString(R.string.eq_title), sc,
+                getString(R.string.done), null,
+                getString(R.string.reset), () -> {
+                    SharedPreferences.Editor e = prefs.edit();
+                    for (int i = 0; i < 8; i++) e.putFloat("eq_b" + i, 0.5f);
+                    e.putFloat("eq_bass", 0f).putFloat("eq_virt", 0f)
+                            .putFloat("speed", 1f).apply();
+                    setupAudioFx();
+                    applySpeed();
+                });
+    }
+
+    /** Настройки: энергосбережение + версия со ссылкой на исходники. */
+    private void showSettingsDialog() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+
+        LinearLayout psRow = new LinearLayout(this);
+        psRow.setOrientation(LinearLayout.HORIZONTAL);
+        psRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout psText = new LinearLayout(this);
+        psText.setOrientation(LinearLayout.VERTICAL);
+        TextView psTitle = new TextView(this);
+        psTitle.setText(R.string.power_save);
+        psTitle.setTextColor(textColor);
+        psTitle.setTextSize(15f);
+        TextView psSub = new TextView(this);
+        psSub.setText(R.string.power_save_sub);
+        psSub.setTextColor(dimColor);
+        psSub.setTextSize(11.5f);
+        psText.addView(psTitle);
+        psText.addView(psSub);
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        psRow.addView(psText, tlp);
+        Switch sw = new Switch(this);
+        sw.setChecked(powerSave);
+        sw.setThumbTintList(ColorStateList.valueOf(accent));
+        sw.setTrackTintList(ColorStateList.valueOf(dimColor));
+        sw.setOnCheckedChangeListener((b, checked) -> setPowerSave(checked));
+        psRow.addView(sw);
+        content.addView(psRow);
+
+        TextView ver = new TextView(this);
+        ver.setText(R.string.version_link);
+        ver.setTextColor(dimColor);
+        ver.setTextSize(12f);
+        ver.setGravity(Gravity.CENTER);
+        ver.setPadding(dp(8), dp(22), dp(8), dp(4));
+        TypedValue out = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, out, true);
+        ver.setBackgroundResource(out.resourceId);
+        ver.setOnClickListener(v ->
+                openUrl("https://github.com/GuardionSpend/fable-player"));
+        content.addView(ver);
+
+        showStyledDialog(getString(R.string.settings), content,
+                null, null, getString(R.string.close), null);
+    }
+
+    private void setPowerSave(boolean on) {
+        powerSave = on;
+        prefs.edit().putBoolean("powersave", on).apply();
+        if (on) {
+            particles.setRunning(false);
+            list.setLayoutAnimation(null);
+            if (blurAnim != null) blurAnim.cancel();
+            if (Build.VERSION.SDK_INT >= 31) mainScreen.setRenderEffect(null);
+            blurAmt = 0f;
+        } else {
+            setupListAnimation();
+            if (expanded) {
+                particles.setRunning(player != null && player.isPlaying());
+                blurMain(1f);
+            } else if (drawerOpen) {
+                blurMain(0.6f);
+            }
+        }
     }
 
     // ---------- Статистика ----------
@@ -1669,6 +1962,7 @@ public class MainActivity extends Activity {
             session.release();
             session = null;
         }
+        releaseFx();
         if (player != null) {
             player.release();
             player = null;
