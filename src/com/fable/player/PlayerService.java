@@ -15,6 +15,8 @@ import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Icon;
 import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.media.MediaPlayer;
 import android.media.audiofx.BassBoost;
@@ -70,14 +72,72 @@ public class PlayerService extends Service {
     private boolean foreground;
     private final Handler h = new Handler(Looper.getMainLooper());
 
+    private AudioManager am;
+    private AudioFocusRequest focusReq;
+    private boolean pausedByFocus;
+
+    private Runnable sleepRunnable;
+    private long sleepAt;             // момент остановки (мс), 0 = выкл
+    private boolean sleepEndOfTrack;  // остановиться по концу текущего трека
+
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent i) {
             String a = i.getAction();
             if (ACT_PLAY.equals(a)) togglePlay();
             else if (ACT_NEXT.equals(a)) next(true);
             else if (ACT_PREV.equals(a)) prev();
+            // Наушники отключились (BT или провод) — не «орём в поезде»
+            else if (AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(a) && isPlaying()) {
+                togglePlay();
+            }
         }
     };
+
+    /** Звонок, другое приложение или ассистент перехватили звук. */
+    private final AudioManager.OnAudioFocusChangeListener focusListener = change -> {
+        switch (change) {
+            case AudioManager.AUDIOFOCUS_LOSS:
+                pausedByFocus = false;
+                if (isPlaying()) togglePlay();
+                break;
+            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
+                if (isPlaying()) { pausedByFocus = true; togglePlay(); }
+                break;
+            case AudioManager.AUDIOFOCUS_GAIN:
+                if (pausedByFocus) { pausedByFocus = false; if (!isPlaying()) togglePlay(); }
+                break;
+        }
+    };
+
+    private boolean requestFocus() {
+        if (am == null) am = getSystemService(AudioManager.class);
+        if (am == null) return true;
+        int res;
+        if (Build.VERSION.SDK_INT >= 26) {
+            if (focusReq == null) {
+                focusReq = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                        .setAudioAttributes(new AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                        .setOnAudioFocusChangeListener(focusListener)
+                        .build();
+            }
+            res = am.requestAudioFocus(focusReq);
+        } else {
+            res = am.requestAudioFocus(focusListener,
+                    AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN);
+        }
+        return res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+    }
+
+    private void abandonFocus() {
+        if (am == null) return;
+        if (Build.VERSION.SDK_INT >= 26) {
+            if (focusReq != null) am.abandonAudioFocusRequest(focusReq);
+        } else {
+            am.abandonAudioFocus(focusListener);
+        }
+    }
 
     private final Runnable tick = new Runnable() {
         @Override public void run() {
@@ -121,6 +181,7 @@ public class PlayerService extends Service {
         f.addAction(ACT_PREV);
         f.addAction(ACT_PLAY);
         f.addAction(ACT_NEXT);
+        f.addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED);
         } else {
@@ -136,8 +197,10 @@ public class PlayerService extends Service {
     public void onDestroy() {
         super.onDestroy();
         saveStats();
+        cancelSleep();
         h.removeCallbacksAndMessages(null);
         try { unregisterReceiver(receiver); } catch (Exception ignored) { }
+        abandonFocus();
         releaseFx();
         if (player != null) { player.release(); player = null; }
         if (session != null) { session.setActive(false); session.release(); session = null; }
@@ -183,6 +246,7 @@ public class PlayerService extends Service {
         Track t = queue.get(index);
         qIndex = index;
 
+        requestFocus();
         if (player != null) { player.release(); player = null; }
         player = new MediaPlayer();
         player.setAudioAttributes(new AudioAttributes.Builder()
@@ -207,6 +271,7 @@ public class PlayerService extends Service {
         updateMetadata();
         updateState();
         goForeground();
+        updateWidget();
         if (listener != null) {
             listener.onTrackChanged(t);
             listener.onPlayState(true);
@@ -219,12 +284,14 @@ public class PlayerService extends Service {
             if (player.isPlaying()) {
                 player.pause();
             } else {
+                requestFocus();
                 player.start();
                 applySpeed();
             }
         } catch (IllegalStateException ignored) { }
         updateState();
         updateNotification();
+        updateWidget();
         if (listener != null) listener.onPlayState(isPlaying());
     }
 
@@ -254,7 +321,44 @@ public class PlayerService extends Service {
         startTrack(n);
     }
 
+    // ---------- Таймер сна ----------
+
+    public void setSleepTimer(long delayMs) {
+        cancelSleep();
+        if (delayMs <= 0) return;
+        sleepAt = System.currentTimeMillis() + delayMs;
+        sleepRunnable = () -> {
+            if (isPlaying()) togglePlay();
+            sleepAt = 0;
+            sleepRunnable = null;
+        };
+        h.postDelayed(sleepRunnable, delayMs);
+    }
+
+    public void setSleepEndOfTrack() {
+        cancelSleep();
+        sleepEndOfTrack = true;
+    }
+
+    public void cancelSleep() {
+        if (sleepRunnable != null) h.removeCallbacks(sleepRunnable);
+        sleepRunnable = null;
+        sleepAt = 0;
+        sleepEndOfTrack = false;
+    }
+
+    /** 0 — выкл; -1 — «конец трека»; иначе оставшиеся миллисекунды. */
+    public long sleepRemaining() {
+        if (sleepEndOfTrack) return -1;
+        return sleepAt == 0 ? 0 : Math.max(0, sleepAt - System.currentTimeMillis());
+    }
+
     private void onFinished() {
+        if (sleepEndOfTrack) {
+            sleepEndOfTrack = false;
+            stopAtEnd();
+            return;
+        }
         if (repeatMode == REPEAT_ONE && player != null) {
             try {
                 player.seekTo(0);
@@ -275,6 +379,7 @@ public class PlayerService extends Service {
         }
         updateState();
         updateNotification();
+        updateWidget();
         if (listener != null) listener.onPlayState(false);
     }
 
@@ -289,6 +394,17 @@ public class PlayerService extends Service {
         art = b;
         updateMetadata();
         updateNotification();
+        updateWidget();
+    }
+
+    public Bitmap widgetArt() { return art; }
+
+    private void updateWidget() {
+        Track t = current();
+        FableWidget.refresh(this,
+                t != null ? t.title : getString(R.string.app_name),
+                t != null ? t.artist : getString(R.string.nothing_playing),
+                art, isPlaying());
     }
 
     private Uri trackUri(Track t) {

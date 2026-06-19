@@ -5,6 +5,9 @@ import android.animation.ArgbEvaluator;
 import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.Dialog;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.ContentUris;
 import android.content.Intent;
@@ -82,6 +85,11 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     private static final int REQ_PERM = 1;
     private static final int REQ_PICK_COVER = 2;
     private static final int REQ_PICK_PL_COVER = 3;
+    private static final int REQ_DELETE = 4;
+    private static final int REQ_BACKUP_SAVE = 5;
+    private static final int REQ_RESTORE_OPEN = 6;
+    private static final int NOTIF_BACKUP = 2;
+    private static final String CH_BACKUP = "backup";
     private static final int BG_BOTTOM = 0xFF0E0E14;
 
     private static class Playlist {
@@ -109,6 +117,8 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     private boolean onboardOpen = false;
     private long pendingCoverId = -1;
     private long pendingPlCoverId = -1;
+    private long pendingDeleteId = -1;
+    private boolean backupWithAudio = false;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService exec = Executors.newSingleThreadExecutor();
@@ -602,7 +612,20 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 .setDuration(220)
                 .setInterpolator(new DecelerateInterpolator(2f))
                 .start();
-        pw.showAsDropDown(anchor, anchor.getWidth() - width, -dp(6));
+
+        // Если под якорем не хватает места — открываем меню вверх, а не за экран
+        box.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        int menuH = box.getMeasuredHeight();
+        int[] loc = new int[2];
+        anchor.getLocationOnScreen(loc);
+        int screenH = getResources().getDisplayMetrics().heightPixels;
+        int xoff = anchor.getWidth() - width;
+        if (loc[1] + anchor.getHeight() + menuH < screenH - dp(24)) {
+            pw.showAsDropDown(anchor, xoff, -dp(6));
+        } else {
+            pw.showAsDropDown(anchor, xoff, -(menuH + anchor.getHeight() + dp(6)));
+        }
     }
 
     private TextView dialogButton(String text, int color) {
@@ -975,6 +998,7 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                                     Toast.LENGTH_SHORT).show();
                         })},
                 {getString(R.string.eq_title), (Runnable) this::showEqDialog},
+                {getString(R.string.sleep_timer), (Runnable) this::showSleepDialog},
                 {getString(R.string.settings), (Runnable) this::showSettingsDialog},
                 {getString(R.string.menu_author), (Runnable) this::openTelegram, true},
         });
@@ -1001,7 +1025,53 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 refreshShown(false);
             }});
         }
+        items.add(new Object[]{getString(R.string.delete_device),
+                (Runnable) () -> confirmDelete(t)});
         showMenuPopup(anchor, items.toArray(new Object[0][]));
+    }
+
+    // ---------- Удаление трека с устройства ----------
+
+    private void confirmDelete(final Track t) {
+        showStyledDialog(getString(R.string.delete_q), null,
+                getString(R.string.delete_device), () -> deleteTrack(t),
+                getString(R.string.cancel), null);
+    }
+
+    private void deleteTrack(Track t) {
+        Uri uri = trackUri(t);
+        if (Build.VERSION.SDK_INT >= 30) {
+            ArrayList<Uri> uris = new ArrayList<>();
+            uris.add(uri);
+            try {
+                android.app.PendingIntent pi =
+                        MediaStore.createDeleteRequest(getContentResolver(), uris);
+                pendingDeleteId = t.id;
+                startIntentSenderForResult(pi.getIntentSender(), REQ_DELETE,
+                        null, 0, 0, 0);
+            } catch (Exception e) {
+                pendingDeleteId = -1;
+            }
+        } else {
+            try {
+                int n = getContentResolver().delete(uri, null, null);
+                if (n > 0) finalizeDelete(t.id);
+            } catch (Exception ignored) { }
+        }
+    }
+
+    private void finalizeDelete(long id) {
+        for (int i = allTracks.size() - 1; i >= 0; i--) {
+            if (allTracks.get(i).id == id) { allTracks.remove(i); break; }
+        }
+        for (Playlist p : playlists) p.ids.remove(id);
+        savePlaylists();
+        favs.remove(String.valueOf(id));
+        prefs.edit().putStringSet("favs", new HashSet<>(favs)).apply();
+        thumbCache.remove(id);
+        customCoverFile(id).delete();
+        refreshShown(false);
+        Toast.makeText(this, R.string.toast_deleted, Toast.LENGTH_SHORT).show();
     }
 
     private void openTelegram() {
@@ -1035,8 +1105,24 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     @Override
     protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
+
+        if (req == REQ_DELETE) {
+            if (res == RESULT_OK && pendingDeleteId >= 0) finalizeDelete(pendingDeleteId);
+            pendingDeleteId = -1;
+            return;
+        }
+
         if (res != RESULT_OK || data == null || data.getData() == null) return;
         final Uri uri = data.getData();
+
+        if (req == REQ_BACKUP_SAVE) {
+            doBackup(uri, backupWithAudio);
+            return;
+        }
+        if (req == REQ_RESTORE_OPEN) {
+            doRestore(uri);
+            return;
+        }
 
         if (req == REQ_PICK_COVER && pendingCoverId >= 0) {
             final long id = pendingCoverId;
@@ -1143,7 +1229,8 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 MediaStore.Audio.Media._ID,
                 MediaStore.Audio.Media.TITLE,
                 MediaStore.Audio.Media.ARTIST,
-                MediaStore.Audio.Media.DURATION
+                MediaStore.Audio.Media.DURATION,
+                MediaStore.Audio.Media.DISPLAY_NAME
         };
         try (Cursor c = getContentResolver().query(
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, proj,
@@ -1159,6 +1246,7 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                         t.artist = getString(R.string.unknown_artist);
                     }
                     t.duration = c.getLong(3);
+                    t.file = c.getString(4);
                     allTracks.add(t);
                 }
             }
@@ -1716,6 +1804,23 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         lrl.topMargin = dp(8);
         content.addView(langRow, lrl);
 
+        final Dialog[] dref = new Dialog[1];
+
+        PlayerService s0 = svc();
+        long rem = s0 != null ? s0.sleepRemaining() : 0;
+        String sleepState = rem == -1 ? getString(R.string.sleep_end)
+                : rem > 0 ? formatListened((rem / 60000 + 1) * 60000)
+                : getString(R.string.sleep_off);
+        content.addView(settingButton(getString(R.string.sleep_timer), sleepState, () -> {
+            if (dref[0] != null) dref[0].dismiss();
+            showSleepDialog();
+        }), settingLp());
+
+        content.addView(settingButton(getString(R.string.backup), null, () -> {
+            if (dref[0] != null) dref[0].dismiss();
+            showBackupDialog();
+        }), settingLp());
+
         TextView ver = new TextView(this);
         ver.setText(R.string.version_link);
         ver.setTextColor(dimColor);
@@ -1729,8 +1834,471 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 openUrl("https://github.com/GuardionSpend/fable-player"));
         content.addView(ver);
 
-        showStyledDialog(getString(R.string.settings), content,
+        dref[0] = showStyledDialog(getString(R.string.settings), content,
                 null, null, getString(R.string.close), null);
+    }
+
+    private LinearLayout.LayoutParams settingLp() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(6);
+        return lp;
+    }
+
+    /** Кликабельный пункт настроек: заголовок + необязательная подпись. */
+    private View settingButton(String title, String sub, Runnable onClick) {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(4), dp(12), dp(4), dp(12));
+        TypedValue out = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, out, true);
+        col.setBackgroundResource(out.resourceId);
+        TextView t = new TextView(this);
+        t.setText(title);
+        t.setTextColor(textColor);
+        t.setTextSize(15f);
+        col.addView(t);
+        if (sub != null) {
+            TextView st = new TextView(this);
+            st.setText(sub);
+            st.setTextColor(accent);
+            st.setTextSize(11.5f);
+            col.addView(st);
+        }
+        col.setOnClickListener(v -> onClick.run());
+        return col;
+    }
+
+    // ---------- Таймер сна ----------
+
+    private void showSleepDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        final Dialog[] ref = new Dialog[1];
+        int[] mins = {15, 30, 45, 60, 90};
+        for (final int m : mins) {
+            TextView row = menuRow(m + " " + getString(R.string.m_short), textColor);
+            row.setOnClickListener(v -> {
+                ref[0].dismiss();
+                PlayerService s = svc();
+                if (s != null) s.setSleepTimer(m * 60000L);
+                Toast.makeText(this, R.string.sleep_set, Toast.LENGTH_SHORT).show();
+            });
+            box.addView(row);
+        }
+        TextView end = menuRow(getString(R.string.sleep_end), textColor);
+        end.setOnClickListener(v -> {
+            ref[0].dismiss();
+            PlayerService s = svc();
+            if (s != null) s.setSleepEndOfTrack();
+            Toast.makeText(this, R.string.sleep_set, Toast.LENGTH_SHORT).show();
+        });
+        box.addView(end);
+        TextView off = menuRow(getString(R.string.sleep_off), dimColor);
+        off.setOnClickListener(v -> {
+            ref[0].dismiss();
+            PlayerService s = svc();
+            if (s != null) s.cancelSleep();
+        });
+        box.addView(off);
+        ref[0] = showStyledDialog(getString(R.string.sleep_timer), box, null, null, null, null);
+    }
+
+    // ---------- Резервная копия ----------
+
+    private void showBackupDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        final Dialog[] ref = new Dialog[1];
+
+        box.addView(backupRow(getString(R.string.backup_with_audio),
+                getString(R.string.backup_with_audio_sub), () -> {
+                    ref[0].dismiss();
+                    startBackup(true);
+                }));
+        box.addView(backupRow(getString(R.string.backup_data_only),
+                getString(R.string.backup_data_only_sub), () -> {
+                    ref[0].dismiss();
+                    startBackup(false);
+                }));
+        box.addView(backupRow(getString(R.string.backup_restore), null, () -> {
+            ref[0].dismiss();
+            startRestore();
+        }));
+        ref[0] = showStyledDialog(getString(R.string.backup), box, null, null,
+                getString(R.string.close), null);
+    }
+
+    private View backupRow(String title, String sub, Runnable onClick) {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(14), dp(12), dp(14), dp(12));
+        TypedValue out = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, out, true);
+        col.setBackgroundResource(out.resourceId);
+        TextView t = new TextView(this);
+        t.setText(title);
+        t.setTextColor(textColor);
+        t.setTextSize(15f);
+        t.setTypeface(null, Typeface.BOLD);
+        col.addView(t);
+        if (sub != null) {
+            TextView st = new TextView(this);
+            st.setText(sub);
+            st.setTextColor(dimColor);
+            st.setTextSize(11.5f);
+            col.addView(st);
+        }
+        col.setOnClickListener(v -> onClick.run());
+        return col;
+    }
+
+    private void startBackup(boolean withAudio) {
+        backupWithAudio = withAudio;
+        String name = "fable_backup_"
+                + new java.text.SimpleDateFormat("yyyyMMdd", Locale.US).format(new java.util.Date())
+                + ".zip";
+        Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        i.setType("application/zip");
+        i.putExtra(Intent.EXTRA_TITLE, name);
+        try { startActivityForResult(i, REQ_BACKUP_SAVE); } catch (Exception ignored) { }
+    }
+
+    private void startRestore() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.setType("*/*");
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        try { startActivityForResult(i, REQ_RESTORE_OPEN); } catch (Exception ignored) { }
+    }
+
+    /** Уведомление с прогресс-баром. cur<0 — «крутилка», max<=0 — завершено. */
+    private void progressNotif(String title, String text, int max, int cur) {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        if (nm == null) return;
+        if (Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel(CH_BACKUP) == null) {
+            NotificationChannel ch = new NotificationChannel(CH_BACKUP,
+                    getString(R.string.backup), NotificationManager.IMPORTANCE_LOW);
+            ch.setShowBadge(false);
+            nm.createNotificationChannel(ch);
+        }
+        Notification.Builder nb = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(this, CH_BACKUP)
+                : new Notification.Builder(this);
+        nb.setSmallIcon(R.drawable.ic_launcher)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setOnlyAlertOnce(true);
+        boolean done = max <= 0;
+        nb.setOngoing(!done);
+        if (cur < 0) nb.setProgress(0, 0, true);          // неопределённый
+        else if (!done) nb.setProgress(max, cur, false);   // процент
+        try { nm.notify(NOTIF_BACKUP, nb.build()); } catch (Exception ignored) { }
+    }
+
+    private void clearBackupNotif() {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        if (nm != null) nm.cancel(NOTIF_BACKUP);
+    }
+
+    private void doBackup(Uri dest, boolean withAudio) {
+        Toast.makeText(this, R.string.backup_working, Toast.LENGTH_SHORT).show();
+        final ArrayList<Track> snapshot = new ArrayList<>(allTracks);
+        exec.execute(() -> {
+            boolean ok = false;
+            int total = withAudio ? snapshot.size() : 1;
+            progressNotif(getString(R.string.backup_working), "0%", total, 0);
+            try (java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(
+                    getContentResolver().openOutputStream(dest))) {
+                java.util.HashMap<Long, String> idToFile = new java.util.HashMap<>();
+                for (Track t : snapshot) idToFile.put(t.id, t.file != null ? t.file : (t.id + ""));
+
+                JSONObject m = new JSONObject();
+                m.put("version", 1);
+                m.put("hasAudio", withAudio);
+                m.put("lang", prefs.getString("lang", "ru"));
+                m.put("powersave", prefs.getBoolean("powersave", false));
+                JSONObject eq = new JSONObject();
+                for (int i = 0; i < 8; i++) eq.put("b" + i, prefs.getFloat("eq_b" + i, 0.5f));
+                eq.put("bass", prefs.getFloat("eq_bass", 0f));
+                eq.put("virt", prefs.getFloat("eq_virt", 0f));
+                eq.put("speed", prefs.getFloat("speed", 1f));
+                m.put("eq", eq);
+                JSONArray favArr = new JSONArray();
+                for (Track t : snapshot) if (isFav(t.id) && t.file != null) favArr.put(t.file);
+                m.put("favs", favArr);
+                JSONArray plArr = new JSONArray();
+                for (Playlist p : playlists) {
+                    JSONObject po = new JSONObject();
+                    po.put("name", p.name);
+                    JSONArray files = new JSONArray();
+                    for (Long id : p.ids) {
+                        String f = idToFile.get(id);
+                        if (f != null) files.put(f);
+                    }
+                    po.put("tracks", files);
+                    po.put("hasCover", playlistCoverFile(p.id).exists());
+                    po.put("plid", p.id);
+                    plArr.put(po);
+                }
+                m.put("playlists", plArr);
+
+                zip.putNextEntry(new java.util.zip.ZipEntry("fable_backup.json"));
+                zip.write(m.toString().getBytes(StandardCharsets.UTF_8));
+                zip.closeEntry();
+
+                // обложки треков (ключ — имя файла трека)
+                for (Track t : snapshot) {
+                    File cf = customCoverFile(t.id);
+                    if (cf.exists() && t.file != null) {
+                        zip.putNextEntry(new java.util.zip.ZipEntry("covers/" + t.file + ".jpg"));
+                        copyFileToZip(cf, zip);
+                        zip.closeEntry();
+                    }
+                }
+                // обложки плейлистов
+                for (Playlist p : playlists) {
+                    File cf = playlistCoverFile(p.id);
+                    if (cf.exists()) {
+                        zip.putNextEntry(new java.util.zip.ZipEntry("plcovers/" + p.id + ".jpg"));
+                        copyFileToZip(cf, zip);
+                        zip.closeEntry();
+                    }
+                }
+                // сами треки
+                if (withAudio) {
+                    int idx = 0;
+                    for (Track t : snapshot) {
+                        idx++;
+                        if (t.file == null) continue;
+                        try (InputStream in = getContentResolver().openInputStream(trackUri(t))) {
+                            if (in == null) continue;
+                            zip.putNextEntry(new java.util.zip.ZipEntry("audio/" + t.file));
+                            byte[] b = new byte[65536];
+                            int n;
+                            while ((n = in.read(b)) > 0) zip.write(b, 0, n);
+                            zip.closeEntry();
+                        } catch (Exception ignored) { }
+                        int pct = idx * 100 / total;
+                        progressNotif(getString(R.string.backup_working),
+                                pct + "%  ·  " + idx + "/" + total, total, idx);
+                    }
+                }
+                ok = true;
+            } catch (Exception ignored) { }
+            final boolean done = ok;
+            ui.post(() -> {
+                clearBackupNotif();
+                if (done) progressNotif(getString(R.string.backup_done), null, 0, 0);
+                Toast.makeText(this, done ? R.string.backup_done : R.string.restore_fail,
+                        Toast.LENGTH_LONG).show();
+            });
+        });
+    }
+
+    private void copyFileToZip(File f, java.util.zip.ZipOutputStream zip) throws Exception {
+        try (FileInputStream in = new FileInputStream(f)) {
+            byte[] b = new byte[65536];
+            int n;
+            while ((n = in.read(b)) > 0) zip.write(b, 0, n);
+        }
+    }
+
+    private void doRestore(Uri src) {
+        Toast.makeText(this, R.string.restore_working, Toast.LENGTH_SHORT).show();
+        progressNotif(getString(R.string.restore_working), null, 1, -1);
+        exec.execute(() -> {
+            File tmp = new File(getCacheDir(), "restore");
+            deleteDir(tmp);
+            tmp.mkdirs();
+            String manifestStr = null;
+            int audioRestored = 0;
+            try (java.util.zip.ZipInputStream zin = new java.util.zip.ZipInputStream(
+                    getContentResolver().openInputStream(src))) {
+                java.util.zip.ZipEntry e;
+                byte[] buf = new byte[65536];
+                while ((e = zin.getNextEntry()) != null) {
+                    String name = e.getName();
+                    if (name.equals("fable_backup.json")) {
+                        ByteArrayOutputStream bo = new ByteArrayOutputStream();
+                        int n;
+                        while ((n = zin.read(buf)) > 0) bo.write(buf, 0, n);
+                        manifestStr = new String(bo.toByteArray(), StandardCharsets.UTF_8);
+                    } else if (name.startsWith("covers/") || name.startsWith("plcovers/")) {
+                        File out = new File(tmp, name);
+                        out.getParentFile().mkdirs();
+                        try (FileOutputStream fo = new FileOutputStream(out)) {
+                            int n;
+                            while ((n = zin.read(buf)) > 0) fo.write(buf, 0, n);
+                        }
+                    } else if (name.startsWith("audio/")) {
+                        String fn = name.substring("audio/".length());
+                        if (restoreAudio(fn, zin, buf)) {
+                            audioRestored++;
+                            progressNotif(getString(R.string.restore_working),
+                                    audioRestored + "", 1, -1);
+                        }
+                    }
+                    zin.closeEntry();
+                }
+            } catch (Exception ex) {
+                ui.post(() -> {
+                    clearBackupNotif();
+                    Toast.makeText(this, R.string.restore_fail, Toast.LENGTH_LONG).show();
+                });
+                return;
+            }
+            final String manifest = manifestStr;
+            final int restored = audioRestored;
+            ui.post(() -> finalizeRestore(manifest, tmp, restored));
+        });
+    }
+
+    /** Возвращает true, если трек реально добавлен (а не уже был). */
+    private boolean restoreAudio(String fileName, InputStream in, byte[] buf) {
+        for (Track t : allTracks) {
+            if (fileName.equals(t.file)) return false; // уже есть — не дублируем
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                android.content.ContentValues v = new android.content.ContentValues();
+                v.put(MediaStore.Audio.Media.DISPLAY_NAME, fileName);
+                v.put(MediaStore.Audio.Media.RELATIVE_PATH, "Music/FablePlayer");
+                v.put(MediaStore.Audio.Media.IS_PENDING, 1);
+                Uri item = getContentResolver().insert(
+                        MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), v);
+                if (item == null) return false;
+                try (java.io.OutputStream os = getContentResolver().openOutputStream(item)) {
+                    int n;
+                    while ((n = in.read(buf)) > 0) os.write(b(buf, n));
+                }
+                v.clear();
+                v.put(MediaStore.Audio.Media.IS_PENDING, 0);
+                getContentResolver().update(item, v, null, null);
+            } else {
+                File dir = new File(android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_MUSIC), "FablePlayer");
+                dir.mkdirs();
+                File out = new File(dir, fileName);
+                try (FileOutputStream fo = new FileOutputStream(out)) {
+                    int n;
+                    while ((n = in.read(buf)) > 0) fo.write(buf, 0, n);
+                }
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private byte[] b(byte[] buf, int n) {
+        if (n == buf.length) return buf;
+        byte[] r = new byte[n];
+        System.arraycopy(buf, 0, r, 0, n);
+        return r;
+    }
+
+    private void finalizeRestore(String manifestStr, File tmp, int audioRestored) {
+        clearBackupNotif();
+        if (manifestStr == null) {
+            Toast.makeText(this, R.string.restore_fail, Toast.LENGTH_LONG).show();
+            return;
+        }
+        try {
+            JSONObject m = new JSONObject(manifestStr);
+            loadTracks(); // подхватить восстановленные треки и новые id
+
+            java.util.HashMap<String, Long> fileToId = new java.util.HashMap<>();
+            for (Track t : allTracks) if (t.file != null) fileToId.put(t.file, t.id);
+
+            // настройки
+            SharedPreferences.Editor e = prefs.edit();
+            if (m.has("eq")) {
+                JSONObject eq = m.getJSONObject("eq");
+                for (int i = 0; i < 8; i++) if (eq.has("b" + i))
+                    e.putFloat("eq_b" + i, (float) eq.getDouble("b" + i));
+                if (eq.has("bass")) e.putFloat("eq_bass", (float) eq.getDouble("bass"));
+                if (eq.has("virt")) e.putFloat("eq_virt", (float) eq.getDouble("virt"));
+                if (eq.has("speed")) e.putFloat("speed", (float) eq.getDouble("speed"));
+            }
+            e.apply();
+            PlayerService s = svc();
+            if (s != null) s.refreshFx();
+
+            // избранное
+            if (m.has("favs")) {
+                JSONArray fa = m.getJSONArray("favs");
+                for (int i = 0; i < fa.length(); i++) {
+                    Long id = fileToId.get(fa.getString(i));
+                    if (id != null) favs.add(String.valueOf(id));
+                }
+                prefs.edit().putStringSet("favs", new HashSet<>(favs)).apply();
+            }
+
+            // плейлисты
+            if (m.has("playlists")) {
+                JSONArray pa = m.getJSONArray("playlists");
+                for (int i = 0; i < pa.length(); i++) {
+                    JSONObject po = pa.getJSONObject(i);
+                    Playlist p = createPlaylist(po.getString("name"));
+                    JSONArray tr = po.getJSONArray("tracks");
+                    for (int j = 0; j < tr.length(); j++) {
+                        Long id = fileToId.get(tr.getString(j));
+                        if (id != null && !p.ids.contains(id)) p.ids.add(id);
+                    }
+                    // обложка плейлиста по старому plid
+                    if (po.optBoolean("hasCover", false) && po.has("plid")) {
+                        File from = new File(tmp, "plcovers/" + po.getLong("plid") + ".jpg");
+                        if (from.exists()) copyFile(from, playlistCoverFile(p.id));
+                    }
+                }
+                savePlaylists();
+            }
+
+            // обложки треков: имя файла → новый id
+            File coversDir = new File(tmp, "covers");
+            if (coversDir.isDirectory()) {
+                File[] files = coversDir.listFiles();
+                if (files != null) {
+                    for (File cf : files) {
+                        String fn = cf.getName();
+                        if (fn.endsWith(".jpg")) fn = fn.substring(0, fn.length() - 4);
+                        Long id = fileToId.get(fn);
+                        if (id != null) copyFile(cf, customCoverFile(id));
+                    }
+                }
+            }
+
+            deleteDir(tmp);
+            thumbCache.evictAll();
+            refreshShown(true);
+            String summary = audioRestored > 0
+                    ? audioRestored + " " + plural(audioRestored) : getString(R.string.backup);
+            Toast.makeText(this, getString(R.string.restore_done, summary), Toast.LENGTH_LONG).show();
+        } catch (Exception ex) {
+            Toast.makeText(this, R.string.restore_fail, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void copyFile(File from, File to) {
+        try {
+            File dir = to.getParentFile();
+            if (dir != null) dir.mkdirs();
+            try (FileInputStream in = new FileInputStream(from);
+                 FileOutputStream out = new FileOutputStream(to)) {
+                byte[] b = new byte[65536];
+                int n;
+                while ((n = in.read(b)) > 0) out.write(b, 0, n);
+            }
+        } catch (Exception ignored) { }
+    }
+
+    private void deleteDir(File d) {
+        if (d == null || !d.exists()) return;
+        File[] kids = d.listFiles();
+        if (kids != null) for (File k : kids) {
+            if (k.isDirectory()) deleteDir(k); else k.delete();
+        }
+        d.delete();
     }
 
     private void setPowerSave(boolean on) {
