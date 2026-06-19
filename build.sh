@@ -29,12 +29,23 @@ echo "[4/5] zipalign"
 "$BT/zipalign" -f 4 build/app.unsigned.apk build/app.aligned.apk
 
 echo "[5/5] Подпись"
-if [ ! -f debug.keystore ]; then
-    keytool -genkeypair -keystore debug.keystore -storepass android \
-        -keypass android -alias debug -dname "CN=Fable Debug" \
-        -keyalg RSA -keysize 2048 -validity 10000
+if [ -f release.keystore ] && [ -f keystore.pass ]; then
+    # Релизный ключ (для RuStore и публикации). Пароль — в keystore.pass (не в git).
+    PASS="$(cat keystore.pass)"
+    "$BT/apksigner" sign --ks release.keystore --ks-key-alias fable \
+        --ks-pass "pass:$PASS" --key-pass "pass:$PASS" \
+        --out FablePlayer.apk build/app.aligned.apk
+    echo "Подписано РЕЛИЗНЫМ ключом (release.keystore)"
+else
+    # Запасной вариант: отладочный ключ
+    if [ ! -f debug.keystore ]; then
+        keytool -genkeypair -keystore debug.keystore -storepass android \
+            -keypass android -alias debug -dname "CN=Fable Debug" \
+            -keyalg RSA -keysize 2048 -validity 10000
+    fi
+    "$BT/apksigner" sign --ks debug.keystore --ks-pass pass:android \
+        --out FablePlayer.apk build/app.aligned.apk
+    echo "Подписано отладочным ключом (debug.keystore)"
 fi
-"$BT/apksigner" sign --ks debug.keystore --ks-pass pass:android \
-    --out FablePlayer.apk build/app.aligned.apk
 
 echo "Готово: $(pwd)/FablePlayer.apk"
