@@ -3,3 +3,5 @@ debug.keystore
 release.keystore
 keystore.pass
 *.apk
+
+*.idsig
