@@ -39,8 +39,16 @@ public class FableWidget extends AppWidgetProvider {
             rv.setTextViewText(R.id.w_artist, artist);
             rv.setImageViewResource(R.id.w_play,
                     playing ? R.drawable.ic_pause : R.drawable.ic_play);
-            if (art != null) rv.setImageViewBitmap(R.id.w_cover, art);
-            else rv.setImageViewResource(R.id.w_cover, R.drawable.ic_track_placeholder);
+            // Виджет ограничен по памяти на картинку — уменьшаем обложку,
+            // иначе большие обложки роняют приложение (RemoteViews bitmap limit).
+            if (art != null) {
+                Bitmap small = art;
+                try { small = Bitmap.createScaledBitmap(art, 256, 256, true); }
+                catch (Exception ignored) { }
+                rv.setImageViewBitmap(R.id.w_cover, small);
+            } else {
+                rv.setImageViewResource(R.id.w_cover, R.drawable.ic_track_placeholder);
+            }
 
             rv.setOnClickPendingIntent(R.id.w_prev, broadcast(ctx, PlayerService.ACT_PREV, 21));
             rv.setOnClickPendingIntent(R.id.w_play, broadcast(ctx, PlayerService.ACT_PLAY, 22));
