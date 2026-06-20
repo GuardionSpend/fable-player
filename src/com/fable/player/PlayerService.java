@@ -190,8 +190,18 @@ public class PlayerService extends Service {
         h.post(tick);
     }
 
-    @Override public int onStartCommand(Intent i, int flags, int id) { return START_STICKY; }
+    @Override public int onStartCommand(Intent i, int flags, int id) { return START_NOT_STICKY; }
     @Override public IBinder onBind(Intent i) { return null; }
+
+    /** Пользователь смахнул приложение из недавних — останавливаем музыку и сервис.
+     *  (Простое сворачивание кнопкой «домой» сюда не попадает — фон продолжает играть.) */
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        super.onTaskRemoved(rootIntent);
+        if (player != null) { try { player.release(); } catch (Exception ignored) { } player = null; }
+        stopForeground(true);
+        stopSelf();
+    }
 
     @Override
     public void onDestroy() {
