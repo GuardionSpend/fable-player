@@ -201,7 +201,6 @@
         android:id="@+id/now_playing"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/bg"
         android:clickable="true"
         android:focusable="true"
         android:elevation="16dp"
@@ -264,12 +263,24 @@
                     android:layout_width="44dp"
                     android:layout_height="44dp"
                     android:layout_gravity="right|center_vertical"
-                    android:layout_marginRight="96dp"
+                    android:layout_marginRight="144dp"
                     android:background="?android:attr/selectableItemBackgroundBorderless"
                     android:src="@drawable/ic_heart"
                     android:scaleType="centerInside"
                     android:alpha="0.8"
                     android:contentDescription="@string/favorites"/>
+
+                <ImageButton
+                    android:id="@+id/btn_lyrics"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:layout_gravity="right|center_vertical"
+                    android:layout_marginRight="96dp"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:src="@drawable/ic_lyrics"
+                    android:scaleType="centerInside"
+                    android:alpha="0.8"
+                    android:contentDescription="@string/lyrics"/>
 
                 <ImageButton
                     android:id="@+id/btn_eq"
@@ -302,6 +313,15 @@
                 android:layout_weight="1">
 
                 <ImageView
+                    android:id="@+id/np_glow"
+                    android:layout_width="280dp"
+                    android:layout_height="280dp"
+                    android:layout_gravity="center"
+                    android:scaleType="centerCrop"
+                    android:visibility="gone"
+                    android:importantForAccessibility="no"/>
+
+                <ImageView
                     android:id="@+id/np_cover"
                     android:layout_width="280dp"
                     android:layout_height="280dp"
@@ -310,6 +330,48 @@
                     android:elevation="18dp"
                     android:contentDescription="@string/cover"
                     android:src="@drawable/ic_track_placeholder"/>
+
+                <FrameLayout
+                    android:id="@+id/lyrics_panel"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_marginLeft="4dp"
+                    android:layout_marginRight="4dp"
+                    android:background="@drawable/bg_menu"
+                    android:elevation="20dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:visibility="gone">
+
+                    <ScrollView
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:scrollbars="none"
+                        android:fillViewport="true"
+                        android:padding="20dp">
+
+                        <TextView
+                            android:id="@+id/lyrics_text"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/text"
+                            android:textSize="15sp"
+                            android:lineSpacingExtra="5dp"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:gravity="top"/>
+                    </ScrollView>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="bottom|center_horizontal"
+                        android:layout_marginBottom="10dp"
+                        android:text="@string/lyrics_swipe"
+                        android:textColor="@color/text_dim"
+                        android:textSize="10.5sp"
+                        android:alpha="0.7"/>
+                </FrameLayout>
             </FrameLayout>
 
             <TextView

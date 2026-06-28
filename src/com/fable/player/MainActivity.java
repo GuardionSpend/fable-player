@@ -18,9 +18,14 @@ import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
 import android.graphics.Outline;
+import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
+import android.graphics.RadialGradient;
 import android.graphics.RenderEffect;
 import android.graphics.Shader;
 import android.graphics.Typeface;
@@ -133,9 +138,12 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     private int defaultAccent, textColor, dimColor;
     private ValueAnimator themeAnim;
     private GradientDrawable mainBg;
+    private GradientDrawable npBg;
     private float blurAmt = 0f;
     private ValueAnimator blurAnim;
     private boolean powerSave;
+    private int sortMode;       // 0 — система, 1 — название, 2 — дата
+    private boolean frameless;  // тема: false=классика, true=безрамочная
 
     // Вьюхи
     private View rootFrame, mainScreen, nowPlaying, miniBar, miniProgress;
@@ -143,8 +151,11 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     private LinearLayout playlistContainer;
     private TextView headerTitle, listLabel, statTime, statFav, statCount;
     private EditText searchBox;
-    private ImageView npCover, miniCover, bgA, bgB;
-    private ImageButton btnFav;
+    private ImageView npCover, miniCover, bgA, bgB, npGlow;
+    private ImageButton btnFav, btnLyrics;
+    private View lyricsPanel;
+    private TextView lyricsText;
+    private boolean lyricsOpen;
     private ParticleView particles;
     private TextView npTitle, npArtist, miniTitle, miniArtist, timeNow, timeTotal;
     private SeekBar seek;
@@ -193,6 +204,8 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         prefs = getSharedPreferences("fable", MODE_PRIVATE);
         powerSave = prefs.getBoolean("powersave", false);
         lang = prefs.getString("lang", "ru");
+        sortMode = prefs.getInt("sort", 0);
+        frameless = prefs.getBoolean("frameless", false);
         favs = new HashSet<>(prefs.getStringSet("favs", new HashSet<>()));
 
         defaultAccent = getColor(R.color.accent);
@@ -211,6 +224,11 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         mainBg = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[]{curDark, BG_BOTTOM});
         rootFrame.setBackground(mainBg);
+        // Фон экрана плеера — чёткий вертикальный градиент в цвет обложки
+        npBg = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{curDark, BG_BOTTOM});
+        nowPlaying.setBackground(npBg);
+        applyFramelessTheme();
         applyThemeColors(accent, curDark);
 
         startService(new Intent(this, PlayerService.class));
@@ -229,8 +247,25 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             need.add(Manifest.permission.POST_NOTIFICATIONS);
         }
-        if (hasPermission()) loadTracks();
+        if (hasPermission()) { loadTracks(); tryResume(); }
         if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), REQ_PERM);
+    }
+
+    /** Если ничего не играет — восстановить последний трек на сохранённой позиции (на паузе). */
+    private void tryResume() {
+        PlayerService s = svc();
+        if (s == null || s.current() != null) return;
+        long rid = prefs.getLong("resume_id", -1);
+        String rfile = prefs.getString("resume_file", "");
+        int rpos = prefs.getInt("resume_pos", 0);
+        if (rid < 0 && rfile.isEmpty()) return;
+        int idx = -1;
+        for (int i = 0; i < allTracks.size(); i++) {
+            Track t = allTracks.get(i);
+            if (t.id == rid || (!rfile.isEmpty() && rfile.equals(t.file))) { idx = i; break; }
+        }
+        if (idx < 0) return;
+        s.prepareResume(new ArrayList<>(allTracks), idx, rpos);
     }
 
     /** После пересоздания (смена языка) подхватываем играющий трек из сервиса. */
@@ -273,10 +308,14 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         statCount = findViewById(R.id.stat_count);
         searchBox = findViewById(R.id.search);
         npCover = findViewById(R.id.np_cover);
+        npGlow = findViewById(R.id.np_glow);
+        lyricsPanel = findViewById(R.id.lyrics_panel);
+        lyricsText = findViewById(R.id.lyrics_text);
         miniCover = findViewById(R.id.mini_cover);
         bgA = findViewById(R.id.bg_a);
         bgB = findViewById(R.id.bg_b);
         btnFav = findViewById(R.id.btn_fav);
+        btnLyrics = findViewById(R.id.btn_lyrics);
         particles = findViewById(R.id.particles);
         npTitle = findViewById(R.id.np_title);
         npArtist = findViewById(R.id.np_artist);
@@ -360,6 +399,20 @@ public class MainActivity extends Activity implements PlayerService.Listener {
             }
         });
 
+        btnLyrics.setOnClickListener(v -> {
+            Track t = currentTrack();
+            if (t == null) return;
+            pulse(btnLyrics);
+            if (lyricsOpen) closeLyrics();
+            else openLyrics(t);
+        });
+        View.OnClickListener editLyrics = v -> {
+            Track t = currentTrack();
+            if (t != null) showLyricsDialog(t);
+        };
+        lyricsPanel.setOnClickListener(editLyrics);
+        lyricsText.setOnClickListener(editLyrics);
+
         findViewById(R.id.btn_menu).setOnClickListener(this::showMainMenu);
         findViewById(R.id.btn_eq).setOnClickListener(v -> showEqDialog());
         findViewById(R.id.btn_np_menu).setOnClickListener(v -> {
@@ -431,6 +484,11 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         timeNow.setText("0:00");
         timeTotal.setText(formatTime((int) t.duration));
         if (!expanded) showMiniBar();
+        if (lyricsOpen) {  // показать текст нового трека, не закрывая панель
+            String text = readLyrics(t.id);
+            lyricsText.setText(text.isEmpty() ? getString(R.string.lyrics_empty) : text);
+            lyricsText.setTextColor(text.isEmpty() ? dimColor : textColor);
+        }
         updateFavButton();
         adapter.notifyDataSetChanged();
         loadCoverAndTheme(t);
@@ -461,19 +519,131 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         btnFav.setImageTintList(ColorStateList.valueOf(f ? accent : textColor));
     }
 
+    // ---------- Текст песни ----------
+
+    private File lyricsFile(long id) {
+        return new File(getFilesDir(), "lyrics/" + id + ".txt");
+    }
+
+    private String readLyrics(long id) {
+        File f = lyricsFile(id);
+        if (!f.exists()) return "";
+        try (FileInputStream in = new FileInputStream(f)) {
+            ByteArrayOutputStream bo = new ByteArrayOutputStream();
+            byte[] b = new byte[8192];
+            int n;
+            while ((n = in.read(b)) > 0) bo.write(b, 0, n);
+            return new String(bo.toByteArray(), StandardCharsets.UTF_8);
+        } catch (Exception e) { return ""; }
+    }
+
+    private void openLyrics(Track t) {
+        if (lyricsOpen) return;
+        lyricsOpen = true;
+        String text = readLyrics(t.id);
+        if (text.isEmpty()) {
+            lyricsText.setText(R.string.lyrics_empty);
+            lyricsText.setTextColor(dimColor);
+        } else {
+            lyricsText.setText(text);
+            lyricsText.setTextColor(textColor);
+        }
+        lyricsPanel.setVisibility(View.VISIBLE);
+        int w = lyricsPanel.getWidth() > 0 ? lyricsPanel.getWidth() : rootFrame.getWidth();
+        lyricsPanel.setTranslationX(w);
+        lyricsPanel.animate().translationX(0)
+                .setDuration(340)
+                .setInterpolator(new DecelerateInterpolator(2.2f))
+                .start();
+        btnLyrics.setImageTintList(ColorStateList.valueOf(accent));
+    }
+
+    private void closeLyrics() {
+        if (!lyricsOpen) return;
+        lyricsOpen = false;
+        int w = lyricsPanel.getWidth() > 0 ? lyricsPanel.getWidth() : rootFrame.getWidth();
+        lyricsPanel.animate().translationX(w)
+                .setDuration(300)
+                .setInterpolator(new DecelerateInterpolator(1.8f))
+                .withEndAction(() -> lyricsPanel.setVisibility(View.GONE))
+                .start();
+        btnLyrics.setImageTintList(ColorStateList.valueOf(textColor));
+    }
+
+    private void showLyricsDialog(final Track t) {
+        final String existing = readLyrics(t.id);
+
+        final EditText et = new EditText(this);
+        et.setHint(R.string.lyrics_hint);
+        et.setText(existing);
+        et.setTextColor(textColor);
+        et.setHintTextColor(dimColor);
+        et.setTextSize(14.5f);
+        et.setGravity(Gravity.TOP);
+        et.setBackgroundResource(R.drawable.bg_search);
+        et.setPadding(dp(16), dp(12), dp(16), dp(12));
+        et.setLineSpacing(dp(3), 1f);
+
+        ScrollView sc = new ScrollView(this);
+        sc.setVerticalScrollBarEnabled(false);
+        sc.addView(et);
+        final int maxH = getResources().getDisplayMetrics().heightPixels * 50 / 100;
+        sc.post(() -> {
+            if (sc.getHeight() > maxH) {
+                ViewGroup.LayoutParams lp = sc.getLayoutParams();
+                lp.height = maxH;
+                sc.setLayoutParams(lp);
+            }
+        });
+
+        showStyledDialog(getString(R.string.lyrics), sc,
+                getString(R.string.save), () -> {
+                    String text = et.getText().toString().trim();
+                    File f = lyricsFile(t.id);
+                    File dir = f.getParentFile();
+                    if (dir != null) dir.mkdirs();
+                    try {
+                        if (text.isEmpty()) {
+                            f.delete();
+                        } else {
+                            try (FileOutputStream out = new FileOutputStream(f)) {
+                                out.write(text.getBytes(StandardCharsets.UTF_8));
+                            }
+                        }
+                        Toast.makeText(this, R.string.lyrics_saved, Toast.LENGTH_SHORT).show();
+                        if (lyricsOpen) {
+                            if (text.isEmpty()) {
+                                lyricsText.setText(R.string.lyrics_empty);
+                                lyricsText.setTextColor(dimColor);
+                            } else {
+                                lyricsText.setText(text);
+                                lyricsText.setTextColor(textColor);
+                            }
+                        }
+                    } catch (Exception ignored) { }
+                }, getString(R.string.close), null);
+    }
+
     /** Большая обложка всегда квадратная и вписана в доступное место. */
     private void squareCover() {
         final View frame = findViewById(R.id.cover_frame);
         frame.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
-            int size = Math.min(r - l - dp(16), b - t - dp(16));
+            // в безрамочной обложка крупнее (края растворяются, запас не нужен)
+            int pad = frameless ? dp(0) : dp(16);
+            int size = Math.min(r - l - pad, b - t - pad);
             if (size <= 0) return;
-            ViewGroup.LayoutParams lp = npCover.getLayoutParams();
-            if (lp.width != size) {
-                lp.width = size;
-                lp.height = size;
-                npCover.setLayoutParams(lp);
-            }
+            setSquare(npCover, size);
+            setSquare(npGlow, size);
         });
+    }
+
+    private void setSquare(View v, int size) {
+        ViewGroup.LayoutParams lp = v.getLayoutParams();
+        if (lp.width != size) {
+            lp.width = size;
+            lp.height = size;
+            v.setLayoutParams(lp);
+        }
     }
 
     // ---------- Приветственный экран ----------
@@ -723,7 +893,11 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                         float dy = ev.getY() - swY;
                         if (Math.abs(dy) > dp(48) && Math.abs(dy) > Math.abs(dx)) {
                             swTracking = false;
-                        } else if (!expanded && !drawerOpen
+                        } else if (lyricsOpen
+                                && dx > dp(64) && Math.abs(dx) > Math.abs(dy) * 1.4f) {
+                            swTracking = false;
+                            closeLyrics();
+                        } else if (!expanded && !drawerOpen && !lyricsOpen
                                 && dx > dp(72) && Math.abs(dx) > Math.abs(dy) * 1.7f) {
                             swTracking = false;
                             openDrawer();
@@ -1205,6 +1379,7 @@ public class MainActivity extends Activity implements PlayerService.Listener {
             if (perms[i].equals(permissionName())) {
                 if (results[i] == PackageManager.PERMISSION_GRANTED) {
                     loadTracks();
+                    tryResume();
                 } else {
                     empty.setText(R.string.no_permission);
                     empty.setVisibility(View.VISIBLE);
@@ -1232,10 +1407,14 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 MediaStore.Audio.Media.DURATION,
                 MediaStore.Audio.Media.DISPLAY_NAME
         };
+        // Порядок выборки: 1 — название, 2 — дата добавления (новые сверху), 0 — как в системе
+        String order;
+        if (sortMode == 1) order = MediaStore.Audio.Media.TITLE + " COLLATE NOCASE ASC";
+        else if (sortMode == 2) order = MediaStore.Audio.Media.DATE_ADDED + " DESC";
+        else order = null;
         try (Cursor c = getContentResolver().query(
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, proj,
-                MediaStore.Audio.Media.IS_MUSIC + "!=0", null,
-                MediaStore.Audio.Media.TITLE + " COLLATE NOCASE ASC")) {
+                MediaStore.Audio.Media.IS_MUSIC + "!=0", null, order)) {
             if (c != null) {
                 while (c.moveToNext()) {
                     Track t = new Track();
@@ -1321,6 +1500,8 @@ public class MainActivity extends Activity implements PlayerService.Listener {
 
     private void collapsePlayer() {
         if (!expanded) return;
+        if (lyricsOpen) { lyricsOpen = false; lyricsPanel.setVisibility(View.GONE);
+            btnLyrics.setImageTintList(ColorStateList.valueOf(textColor)); }
         expanded = false;
         nowPlaying.animate().translationY(rootFrame.getHeight())
                 .setDuration(360)
@@ -1339,7 +1520,9 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     @Override
     public void onBackPressed() {
         if (onboardOpen) return;
-        if (drawerOpen) {
+        if (lyricsOpen) {
+            closeLyrics();
+        } else if (drawerOpen) {
             closeDrawer();
         } else if (expanded) {
             collapsePlayer();
@@ -1399,11 +1582,11 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         exec.execute(() -> {
             final Bitmap art = loadArt(t, 1024);
             final int color = art != null ? extractAccent(art) : defaultAccent;
-            final Bitmap blurBmp = art != null ? blurBitmap(art) : null;
+            final Bitmap displayArt = (frameless && art != null) ? featherBitmap(art) : art;
             ui.post(() -> {
                 if (playingId != id) return;
-                swapCover(art);
-                swapBackground(blurBmp);
+                swapCover(displayArt, art);
+                updateGlow(art, color);
                 animateTheme(color);
                 PlayerService s = svc();
                 if (s != null) s.setArt(art);
@@ -1411,13 +1594,82 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         });
     }
 
-    private void swapCover(Bitmap art) {
+    /** Применяет внешний вид выбранной темы (классика / безрамочная). */
+    private void applyFramelessTheme() {
+        if (frameless) {
+            npCover.setClipToOutline(false);
+            npCover.setElevation(0f);
+            btnPlay.setBackground(null);
+            btnPlay.setElevation(0f);
+        } else {
+            roundCorners(npCover, dp(22));
+            npCover.setElevation(dp(18));
+            btnPlay.setBackgroundResource(R.drawable.bg_play_button);
+            btnPlay.setElevation(dp(8));
+            npGlow.setVisibility(View.GONE);
+        }
+    }
+
+    /** Обложка с мягко растворёнными (размытыми) краями — для безрамочной темы. */
+    private Bitmap featherBitmap(Bitmap src) {
+        int w = src.getWidth(), h = src.getHeight();
+        if (w <= 0 || h <= 0) return src;
+        Bitmap out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(out);
+        c.drawBitmap(src, 0, 0, null);
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        p.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
+        float cx = w / 2f, cy = h / 2f;
+        // прозрачность достигается ДО самого края (0.9r) — у сторон остаётся запас,
+        // поэтому на границе картинки не видно тонкой линии
+        float r = Math.min(w, h) / 2f;
+        p.setShader(new RadialGradient(cx, cy, r,
+                new int[]{0xFFFFFFFF, 0xFFFFFFFF, 0x00FFFFFF},
+                new float[]{0f, 0.3f, 0.9f}, Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, w, h, p);
+        return out;
+    }
+
+    /** Неоновое свечение вокруг кнопки play (мягкое радиальное пятно, без чёткого круга). */
+    private void setupPlayGlow(int color) {
+        GradientDrawable g = new GradientDrawable();
+        g.setShape(GradientDrawable.OVAL);
+        g.setGradientType(GradientDrawable.RADIAL_GRADIENT);
+        g.setGradientRadius(dp(46));
+        int mid = (color & 0x00FFFFFF) | 0x99000000;  // accent, полупрозрачный
+        g.setColors(new int[]{mid, color & 0x00FFFFFF});
+        btnPlay.setBackground(g);
+    }
+
+    /** Неоновое свечение под обложкой для безрамочной темы. */
+    private void updateGlow(Bitmap art, int color) {
+        if (!frameless || art == null) {
+            npGlow.setVisibility(View.GONE);
+            return;
+        }
+        npGlow.setVisibility(View.VISIBLE);
+        // края растворяем маской (работает на любой версии Android, не только с блюром)
+        npGlow.setImageBitmap(featherBitmap(art));
+        npGlow.setColorFilter(color, PorterDuff.Mode.SRC_ATOP);
+        npGlow.setScaleX(1.12f);
+        npGlow.setScaleY(1.12f);
+        if (Build.VERSION.SDK_INT >= 31) {
+            npGlow.setRenderEffect(RenderEffect.createBlurEffect(
+                    dp(24), dp(24), Shader.TileMode.DECAL));
+        }
+        // мягкое неяркое свечение, чтобы не перебивало обложку
+        npGlow.animate().alpha(0f).setDuration(120)
+                .withEndAction(() -> npGlow.animate().alpha(0.4f).setDuration(500).start())
+                .start();
+    }
+
+    private void swapCover(Bitmap npImg, Bitmap miniImg) {
         npCover.animate().alpha(0f).scaleX(0.9f).scaleY(0.9f)
                 .setDuration(150)
                 .withEndAction(() -> {
-                    if (art != null) {
-                        npCover.setImageBitmap(art);
-                        miniCover.setImageBitmap(art);
+                    if (npImg != null) {
+                        npCover.setImageBitmap(npImg);
+                        miniCover.setImageBitmap(miniImg);
                     } else {
                         npCover.setImageResource(R.drawable.ic_track_placeholder);
                         miniCover.setImageResource(R.drawable.ic_track_placeholder);
@@ -1431,25 +1683,6 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                             .start();
                 })
                 .start();
-    }
-
-    private void swapBackground(Bitmap blurBmp) {
-        if (blurBmp == null) {
-            bgA.animate().alpha(0f).setDuration(700).start();
-            bgB.animate().alpha(0f).setDuration(700).start();
-            return;
-        }
-        ImageView show = bgToggle ? bgB : bgA;
-        ImageView hide = bgToggle ? bgA : bgB;
-        bgToggle = !bgToggle;
-        show.setImageBitmap(blurBmp);
-        show.animate().alpha(1f).setDuration(750).start();
-        hide.animate().alpha(0f).setDuration(750).start();
-    }
-
-    private Bitmap blurBitmap(Bitmap src) {
-        int h = Math.max(1, (int) (26f * src.getHeight() / src.getWidth()));
-        return Bitmap.createScaledBitmap(src, 26, h, true);
     }
 
     private Bitmap decodeFileScaled(File f, int maxSize) {
@@ -1551,12 +1784,28 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         curDark = dark;
 
         mainBg.setColors(new int[]{dark, BG_BOTTOM});
+        // Насыщенный градиент экрана плеера под цвет обложки (цвет держится дольше → тёмный низ)
+        if (npBg != null) {
+            npBg.setColors(new int[]{
+                    blend(acc, BG_BOTTOM, 0.12f),
+                    blend(acc, BG_BOTTOM, 0.46f),
+                    BG_BOTTOM});
+        }
         getWindow().setStatusBarColor(dark);
         getWindow().setNavigationBarColor(BG_BOTTOM);
 
         ColorStateList accentTint = ColorStateList.valueOf(acc);
-        btnPlay.setBackgroundTintList(accentTint);
-        btnPlay.setImageTintList(ColorStateList.valueOf(BG_BOTTOM));
+        if (frameless) {
+            btnPlay.setBackgroundTintList(null);
+            setupPlayGlow(acc);
+            btnPlay.setImageTintList(ColorStateList.valueOf(textColor));
+        } else {
+            btnPlay.setBackgroundTintList(accentTint);
+            btnPlay.setImageTintList(ColorStateList.valueOf(BG_BOTTOM));
+        }
+        if (npGlow != null && frameless && npGlow.getVisibility() == View.VISIBLE) {
+            npGlow.setColorFilter(acc, PorterDuff.Mode.SRC_ATOP);
+        }
         seek.setProgressTintList(accentTint);
         seek.setThumbTintList(accentTint);
         miniProgress.setBackgroundColor(acc);
@@ -1811,6 +2060,19 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         String sleepState = rem == -1 ? getString(R.string.sleep_end)
                 : rem > 0 ? formatListened((rem / 60000 + 1) * 60000)
                 : getString(R.string.sleep_off);
+        String[] sortNames = {getString(R.string.sort_off),
+                getString(R.string.sort_title), getString(R.string.sort_date)};
+        content.addView(settingButton(getString(R.string.sort), sortNames[sortMode], () -> {
+            if (dref[0] != null) dref[0].dismiss();
+            showSortDialog();
+        }), settingLp());
+
+        content.addView(settingButton(getString(R.string.theme),
+                getString(frameless ? R.string.theme_frameless : R.string.theme_classic), () -> {
+            if (dref[0] != null) dref[0].dismiss();
+            showThemeDialog();
+        }), settingLp());
+
         content.addView(settingButton(getString(R.string.sleep_timer), sleepState, () -> {
             if (dref[0] != null) dref[0].dismiss();
             showSleepDialog();
@@ -1870,6 +2132,70 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     }
 
     // ---------- Таймер сна ----------
+
+    private void showSortDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        final Dialog[] ref = new Dialog[1];
+        String[] names = {getString(R.string.sort_off),
+                getString(R.string.sort_title), getString(R.string.sort_date)};
+        for (int i = 0; i < names.length; i++) {
+            final int mode = i;
+            TextView row = menuRow(names[i], mode == sortMode ? accent : textColor);
+            row.setOnClickListener(v -> {
+                ref[0].dismiss();
+                if (mode != sortMode) {
+                    sortMode = mode;
+                    prefs.edit().putInt("sort", mode).apply();
+                    if (hasPermission()) { loadTracks(); list.scheduleLayoutAnimation(); }
+                }
+            });
+            box.addView(row);
+        }
+        ref[0] = showStyledDialog(getString(R.string.sort), box, null, null,
+                getString(R.string.close), null);
+    }
+
+    private void showThemeDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        final Dialog[] ref = new Dialog[1];
+        box.addView(themeRow(getString(R.string.theme_classic),
+                getString(R.string.theme_classic_sub), !frameless, ref, false));
+        box.addView(themeRow(getString(R.string.theme_frameless),
+                getString(R.string.theme_frameless_sub), frameless, ref, true));
+        ref[0] = showStyledDialog(getString(R.string.theme), box, null, null,
+                getString(R.string.close), null);
+    }
+
+    private View themeRow(String title, String sub, boolean active, Dialog[] ref, boolean wantFrameless) {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(14), dp(12), dp(14), dp(12));
+        TypedValue out = new TypedValue();
+        getTheme().resolveAttribute(android.R.attr.selectableItemBackground, out, true);
+        col.setBackgroundResource(out.resourceId);
+        TextView t = new TextView(this);
+        t.setText(title);
+        t.setTextColor(active ? accent : textColor);
+        t.setTextSize(15f);
+        t.setTypeface(null, Typeface.BOLD);
+        col.addView(t);
+        TextView st = new TextView(this);
+        st.setText(sub);
+        st.setTextColor(dimColor);
+        st.setTextSize(11.5f);
+        col.addView(st);
+        col.setOnClickListener(v -> {
+            if (ref[0] != null) ref[0].dismiss();
+            if (wantFrameless != frameless) {
+                frameless = wantFrameless;
+                prefs.edit().putBoolean("frameless", frameless).apply();
+                recreate();
+            }
+        });
+        return col;
+    }
 
     private void showSleepDialog() {
         LinearLayout box = new LinearLayout(this);

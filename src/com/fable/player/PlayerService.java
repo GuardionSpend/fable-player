@@ -144,12 +144,23 @@ public class PlayerService extends Service {
             try {
                 if (player != null && player.isPlaying()) {
                     listenedMs += 1000;
-                    if (++saveTick >= 15) { saveTick = 0; saveStats(); }
+                    if (++saveTick >= 5) { saveTick = 0; saveStats(); saveResume(); }
                 }
             } catch (IllegalStateException ignored) { }
             h.postDelayed(this, 1000);
         }
     };
+
+    /** Сохраняет текущий трек и позицию, чтобы продолжить после перезапуска. */
+    public void saveResume() {
+        Track t = current();
+        if (t == null) return;
+        prefs.edit()
+                .putLong("resume_id", t.id)
+                .putString("resume_file", t.file != null ? t.file : "")
+                .putInt("resume_pos", position())
+                .apply();
+    }
 
     @Override
     protected void attachBaseContext(Context base) {
@@ -198,6 +209,7 @@ public class PlayerService extends Service {
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         super.onTaskRemoved(rootIntent);
+        saveResume();
         if (player != null) { try { player.release(); } catch (Exception ignored) { } player = null; }
         stopForeground(true);
         stopSelf();
@@ -207,6 +219,7 @@ public class PlayerService extends Service {
     public void onDestroy() {
         super.onDestroy();
         saveStats();
+        saveResume();
         cancelSleep();
         h.removeCallbacksAndMessages(null);
         try { unregisterReceiver(receiver); } catch (Exception ignored) { }
@@ -251,6 +264,41 @@ public class PlayerService extends Service {
         startTrack(index);
     }
 
+    /** Восстановить трек на указанной позиции, но НЕ запускать (на паузе). */
+    public void prepareResume(ArrayList<Track> q, int index, int posMs) {
+        if (index < 0 || index >= q.size()) return;
+        queue.clear();
+        queue.addAll(q);
+        qIndex = index;
+        Track t = queue.get(index);
+        if (player != null) { player.release(); player = null; }
+        player = new MediaPlayer();
+        player.setAudioAttributes(new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build());
+        player.setOnCompletionListener(mp -> onFinished());
+        try {
+            player.setDataSource(this, trackUri(t));
+            player.prepare();
+            player.seekTo(posMs);
+        } catch (Exception e) {
+            player.release();
+            player = null;
+            return;
+        }
+        setupFx();
+        art = null;
+        updateMetadata();
+        updateState();
+        goForeground();
+        updateWidget();
+        if (listener != null) {
+            listener.onTrackChanged(t);
+            listener.onPlayState(false);
+        }
+    }
+
     private void startTrack(int index) {
         if (index < 0 || index >= queue.size()) return;
         Track t = queue.get(index);
@@ -293,6 +341,7 @@ public class PlayerService extends Service {
         try {
             if (player.isPlaying()) {
                 player.pause();
+                saveResume();
             } else {
                 requestFocus();
                 player.start();
