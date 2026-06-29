@@ -251,10 +251,21 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), REQ_PERM);
     }
 
-    /** Если ничего не играет — восстановить последний трек на сохранённой позиции (на паузе). */
+    private boolean resumeDone = false;
+    private int resumeTries = 0;
+
+    /** Если ничего не играет — восстановить последний трек на сохранённой позиции (на паузе).
+     *  Сервис создаётся асинхронно после startService(), поэтому ждём его готовности. */
     private void tryResume() {
+        if (resumeDone) return;
         PlayerService s = svc();
-        if (s == null || s.current() != null) return;
+        if (s == null) {
+            if (resumeTries++ < 30) ui.postDelayed(this::tryResume, 150);
+            return;
+        }
+        resumeDone = true;
+        if (s.current() != null) return;            // уже что-то играет
+        if (allTracks.isEmpty()) return;
         long rid = prefs.getLong("resume_id", -1);
         String rfile = prefs.getString("resume_file", "");
         int rpos = prefs.getInt("resume_pos", 0);
@@ -583,20 +594,16 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         et.setBackgroundResource(R.drawable.bg_search);
         et.setPadding(dp(16), dp(12), dp(16), dp(12));
         et.setLineSpacing(dp(3), 1f);
+        // многострочное поле фиксированной высоты со внутренним скроллом —
+        // длинный текст не растягивает диалог, кнопки всегда видны
+        et.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        et.setMaxLines(Integer.MAX_VALUE);
+        et.setVerticalScrollBarEnabled(true);
+        et.setHeight(getResources().getDisplayMetrics().heightPixels * 28 / 100);
+        et.setMovementMethod(new android.text.method.ScrollingMovementMethod());
 
-        ScrollView sc = new ScrollView(this);
-        sc.setVerticalScrollBarEnabled(false);
-        sc.addView(et);
-        final int maxH = getResources().getDisplayMetrics().heightPixels * 50 / 100;
-        sc.post(() -> {
-            if (sc.getHeight() > maxH) {
-                ViewGroup.LayoutParams lp = sc.getLayoutParams();
-                lp.height = maxH;
-                sc.setLayoutParams(lp);
-            }
-        });
-
-        showStyledDialog(getString(R.string.lyrics), sc,
+        showStyledDialog(getString(R.string.lyrics), et,
                 getString(R.string.save), () -> {
                     String text = et.getText().toString().trim();
                     File f = lyricsFile(t.id);
@@ -863,7 +870,8 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         if (w != null) {
             w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
             w.setLayout(dp(318), ViewGroup.LayoutParams.WRAP_CONTENT);
-            w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+            w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE
+                    | WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         }
         box.setScaleX(0.92f);
         box.setScaleY(0.92f);
