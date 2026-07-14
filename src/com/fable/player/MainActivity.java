@@ -145,7 +145,6 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     private int sortMode;       // 0 — система, 1 — название, 2 — дата
     private boolean frameless;  // тема: false=классика, true=безрамочная
     private int fxMode;         // 0 — огоньки, 1 — звёзды, 2 — кометы
-    private static boolean greetedThisRun = false;
 
     // Вьюхи
     private View rootFrame, mainScreen, nowPlaying, miniBar, miniProgress;
@@ -242,7 +241,9 @@ public class MainActivity extends Activity implements PlayerService.Listener {
 
         particles.setMode(fxMode);
         if (!prefs.getBoolean("setup_done", false)) showOnboarding();
-        else maybeShowGreeting();
+        // приветствие при каждом входе; savedInstanceState != null — это
+        // пересоздание экрана (смена темы/языка), тогда не повторяем
+        else if (savedInstanceState == null) maybeShowGreeting();
         requestStartPermissions();
         syncFromService();
     }
@@ -668,10 +669,9 @@ public class MainActivity extends Activity implements PlayerService.Listener {
 
     /** Катсцена на 2–3 секунды при входе: случайная фраза с именем из настроек. */
     private void maybeShowGreeting() {
-        if (greetedThisRun || onboardOpen) return;
+        if (onboardOpen) return;
         String name = prefs.getString("user_name", "").trim();
         if (name.isEmpty()) return;
-        greetedThisRun = true;
 
         String[] tpl = getResources().getStringArray(R.array.greetings);
         String phrase = String.format(tpl[(int) (Math.random() * tpl.length)], name);
@@ -749,6 +749,44 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 prefs.edit().putString("user_name", et.getText().toString().trim()).apply(),
                 null, null);
         et.requestFocus();
+    }
+
+    // ---------- Смена иконки приложения ----------
+
+    private static final String[] ICON_ALIASES = {"IconDefault", "IconGreen", "IconRed", "IconBlue"};
+
+    private void showIconDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        final Dialog[] ref = new Dialog[1];
+        String[] names = {getString(R.string.icon_classic), getString(R.string.icon_green),
+                getString(R.string.icon_red), getString(R.string.icon_blue)};
+        int cur = prefs.getInt("app_icon", 0);
+        for (int i = 0; i < names.length; i++) {
+            final int idx = i;
+            TextView row = menuRow(names[i], i == cur ? accent : textColor);
+            row.setOnClickListener(v -> {
+                ref[0].dismiss();
+                if (idx != prefs.getInt("app_icon", 0)) applyIcon(idx);
+            });
+            box.addView(row);
+        }
+        ref[0] = showStyledDialog(getString(R.string.icon_title), box, null, null,
+                getString(R.string.close), null);
+    }
+
+    private void applyIcon(int idx) {
+        PackageManager pm = getPackageManager();
+        for (int i = 0; i < ICON_ALIASES.length; i++) {
+            pm.setComponentEnabledSetting(
+                    new android.content.ComponentName(this,
+                            "com.fable.player." + ICON_ALIASES[i]),
+                    i == idx ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                            : PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    PackageManager.DONT_KILL_APP);
+        }
+        prefs.edit().putInt("app_icon", idx).apply();
+        Toast.makeText(this, R.string.icon_applied, Toast.LENGTH_LONG).show();
     }
 
     private void showFxDialog() {
@@ -2238,6 +2276,14 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 getString(frameless ? R.string.theme_frameless : R.string.theme_classic), () -> {
             if (dref[0] != null) dref[0].dismiss();
             showThemeDialog();
+        }), settingLp());
+
+        String[] iconNames = {getString(R.string.icon_classic), getString(R.string.icon_green),
+                getString(R.string.icon_red), getString(R.string.icon_blue)};
+        content.addView(settingButton(getString(R.string.icon_title),
+                iconNames[prefs.getInt("app_icon", 0)], () -> {
+            if (dref[0] != null) dref[0].dismiss();
+            showIconDialog();
         }), settingLp());
 
         String[] fxNames = {getString(R.string.fx_sparks),

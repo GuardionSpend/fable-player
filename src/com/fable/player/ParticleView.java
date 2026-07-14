@@ -85,11 +85,20 @@ public class ParticleView extends View {
                 p.drift = (1.5f + rnd.nextFloat() * 5f) * d;
                 break;
             case MODE_COMETS:
-                p.x = anywhere ? rnd.nextFloat() * w : -(20 + rnd.nextFloat() * 120) * d;
-                p.y = (0.05f + rnd.nextFloat() * 0.85f) * h;
+                // старт из верхне-левой зоны (за краем), полёт по диагонали вниз-вправо
+                if (anywhere) {
+                    p.x = rnd.nextFloat() * w;
+                    p.y = rnd.nextFloat() * h * 0.7f;
+                } else if (rnd.nextBoolean()) {
+                    p.x = -(20 + rnd.nextFloat() * 120) * d;   // слева
+                    p.y = rnd.nextFloat() * h * 0.5f;
+                } else {
+                    p.x = rnd.nextFloat() * w * 0.6f;          // сверху
+                    p.y = -(20 + rnd.nextFloat() * 80) * d;
+                }
                 p.r = (1.3f + rnd.nextFloat() * 1.4f) * d;
                 p.speed = (1.6f + rnd.nextFloat() * 2.4f) * d;
-                p.drift = (rnd.nextFloat() - 0.35f) * 0.35f * d;
+                p.drift = p.speed * (0.45f + rnd.nextFloat() * 0.25f); // вниз, ~под 30°
                 break;
             default: // огоньки
                 p.x = rnd.nextFloat() * w;
@@ -151,16 +160,17 @@ public class ParticleView extends View {
         p.x += p.speed;
         p.y += p.drift;
         float d = getResources().getDisplayMetrics().density;
-        if (p.x > w + 80 * d) spawn(p, w, h, false);
+        if (p.x > w + 80 * d || p.y > h + 80 * d) spawn(p, w, h, false);
         float a = 0.55f + 0.45f * (0.5f + 0.5f * (float) Math.sin(t * p.twinkle + p.phase));
-        // хвост — в цвет обложки, тает позади головы
+        // хвост — в цвет обложки, тает позади головы (вверх-влево, против полёта)
         int segs = 10;
-        float seg = p.r * 2.4f;
+        float segX = p.speed * 2.2f;
+        float segY = p.drift * 2.2f;
         for (int k = 1; k <= segs; k++) {
             float ta = a * (1f - k / (float) (segs + 1));
             halo.setColor(color);
             halo.setAlpha((int) (80 * ta));
-            c.drawCircle(p.x - k * seg, p.y - k * p.drift * 2.2f,
+            c.drawCircle(p.x - k * segX, p.y - k * segY,
                     p.r * (1f - k * 0.06f), halo);
         }
         // голова — белая, с мягким ореолом

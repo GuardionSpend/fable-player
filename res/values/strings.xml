@@ -78,6 +78,12 @@
     <string name="theme_classic_sub">Обложка в рамке, размытый фон</string>
     <string name="theme_frameless">Безрамочная</string>
     <string name="theme_frameless_sub">Обложка без границ, неоновое свечение</string>
+    <string name="icon_title">Иконка приложения</string>
+    <string name="icon_classic">Классика</string>
+    <string name="icon_green">Зелёная</string>
+    <string name="icon_red">Красная</string>
+    <string name="icon_blue">Синяя</string>
+    <string name="icon_applied">Иконка изменена — рабочий стол обновит её через пару секунд</string>
     <string name="fx_title">Эффекты</string>
     <string name="fx_sparks">Огоньки</string>
     <string name="fx_stars">Звёзды</string>
@@ -104,7 +110,7 @@
     <string name="restore_fail">Не удалось прочитать копию</string>
     <string name="power_save">Энергосбережение</string>
     <string name="power_save_sub">Отключает анимации, огоньки и размытие</string>
-    <string name="version_link">Fable Player v1.6 · открытый код на GitHub</string>
+    <string name="version_link">Fable Player v1.6.1 · открытый код на GitHub</string>
     <string-array name="greetings">
         <item>Что будем слушать сегодня, %s?</item>
         <item>С возвращением, %s!</item>

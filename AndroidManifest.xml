@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.fable.player"
-    android:versionCode="8"
-    android:versionName="1.6">
+    android:versionCode="9"
+    android:versionName="1.6.1">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34"/>
 
@@ -25,12 +25,59 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:configChanges="orientation|screenSize|keyboardHidden">
+            android:configChanges="orientation|screenSize|keyboardHidden"/>
+
+        <activity-alias
+            android:name=".IconDefault"
+            android:targetActivity=".MainActivity"
+            android:icon="@drawable/ic_launcher"
+            android:label="@string/app_name"
+            android:exported="true"
+            android:enabled="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-        </activity>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".IconGreen"
+            android:targetActivity=".MainActivity"
+            android:icon="@drawable/ic_launcher_green"
+            android:label="@string/app_name"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".IconRed"
+            android:targetActivity=".MainActivity"
+            android:icon="@drawable/ic_launcher_red"
+            android:label="@string/app_name"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".IconBlue"
+            android:targetActivity=".MainActivity"
+            android:icon="@drawable/ic_launcher_blue"
+            android:label="@string/app_name"
+            android:exported="true"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity-alias>
 
         <service
             android:name=".PlayerService"

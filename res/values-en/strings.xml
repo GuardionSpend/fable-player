@@ -64,6 +64,12 @@
     <string name="reset">Reset</string>
     <string name="settings">Settings</string>
     <string name="close">Close</string>
+    <string name="icon_title">App icon</string>
+    <string name="icon_classic">Classic</string>
+    <string name="icon_green">Green</string>
+    <string name="icon_red">Red</string>
+    <string name="icon_blue">Blue</string>
+    <string name="icon_applied">Icon changed — your launcher will update it in a moment</string>
     <string name="fx_title">Effects</string>
     <string name="fx_sparks">Sparks</string>
     <string name="fx_stars">Stars</string>
@@ -108,7 +114,7 @@
     <string name="restore_fail">Couldn\'t read the backup</string>
     <string name="power_save">Power saving</string>
     <string name="power_save_sub">Disables animations, sparks and blur</string>
-    <string name="version_link">Fable Player v1.6 · open source on GitHub</string>
+    <string name="version_link">Fable Player v1.6.1 · open source on GitHub</string>
     <string-array name="greetings">
         <item>What are we listening to today, %s?</item>
         <item>Welcome back, %s!</item>
