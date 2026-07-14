@@ -64,6 +64,13 @@
     <string name="reset">Reset</string>
     <string name="settings">Settings</string>
     <string name="close">Close</string>
+    <string name="fx_title">Effects</string>
+    <string name="fx_sparks">Sparks</string>
+    <string name="fx_stars">Stars</string>
+    <string name="fx_comets">Comets</string>
+    <string name="greet_title">Greeting</string>
+    <string name="greet_hint">Your name</string>
+    <string name="greet_off">Off</string>
     <string name="lyrics">Lyrics</string>
     <string name="lyrics_add">Add lyrics</string>
     <string name="lyrics_edit">Edit lyrics</string>
@@ -101,7 +108,15 @@
     <string name="restore_fail">Couldn\'t read the backup</string>
     <string name="power_save">Power saving</string>
     <string name="power_save_sub">Disables animations, sparks and blur</string>
-    <string name="version_link">Fable Player v1.5 · open source on GitHub</string>
+    <string name="version_link">Fable Player v1.6 · open source on GitHub</string>
+    <string-array name="greetings">
+        <item>What are we listening to today, %s?</item>
+        <item>Welcome back, %s!</item>
+        <item>Hey %s, let\'s roll 🎧</item>
+        <item>The music is waiting, %s</item>
+        <item>Enjoy the sound, %s!</item>
+        <item>%s, a perfect day for music</item>
+    </string-array>
     <string name="exit_q">Quit Fable Player?</string>
     <string name="exit_yes">Quit</string>
     <string name="exit_no">Stay</string>

@@ -144,6 +144,8 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     private boolean powerSave;
     private int sortMode;       // 0 — система, 1 — название, 2 — дата
     private boolean frameless;  // тема: false=классика, true=безрамочная
+    private int fxMode;         // 0 — огоньки, 1 — звёзды, 2 — кометы
+    private static boolean greetedThisRun = false;
 
     // Вьюхи
     private View rootFrame, mainScreen, nowPlaying, miniBar, miniProgress;
@@ -166,6 +168,8 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     // Свайп
     private float swX, swY;
     private boolean swTracking;
+    private boolean swCancelSent;
+    private boolean swConsumed;
 
     private final Runnable progressTick = new Runnable() {
         @Override public void run() {
@@ -206,6 +210,7 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         lang = prefs.getString("lang", "ru");
         sortMode = prefs.getInt("sort", 0);
         frameless = prefs.getBoolean("frameless", false);
+        fxMode = prefs.getInt("fx_mode", ParticleView.MODE_SPARKS);
         favs = new HashSet<>(prefs.getStringSet("favs", new HashSet<>()));
 
         defaultAccent = getColor(R.color.accent);
@@ -235,7 +240,9 @@ public class MainActivity extends Activity implements PlayerService.Listener {
         PlayerService.listener = this;
         ui.post(progressTick);
 
+        particles.setMode(fxMode);
         if (!prefs.getBoolean("setup_done", false)) showOnboarding();
+        else maybeShowGreeting();
         requestStartPermissions();
         syncFromService();
     }
@@ -426,6 +433,10 @@ public class MainActivity extends Activity implements PlayerService.Listener {
 
         findViewById(R.id.btn_menu).setOnClickListener(this::showMainMenu);
         findViewById(R.id.btn_eq).setOnClickListener(v -> showEqDialog());
+
+        // плавные переходы на кнопках переключения треков и управлении
+        pressAnim(btnPrev, btnNext, miniPlay, miniNext,
+                btnRepeat, btnShuffle, btnFav, btnLyrics);
         findViewById(R.id.btn_np_menu).setOnClickListener(v -> {
             Track t = currentTrack();
             if (t != null) showTrackMenu(v, t);
@@ -651,6 +662,134 @@ public class MainActivity extends Activity implements PlayerService.Listener {
             lp.height = size;
             v.setLayoutParams(lp);
         }
+    }
+
+    // ---------- Приветствие по имени ----------
+
+    /** Катсцена на 2–3 секунды при входе: случайная фраза с именем из настроек. */
+    private void maybeShowGreeting() {
+        if (greetedThisRun || onboardOpen) return;
+        String name = prefs.getString("user_name", "").trim();
+        if (name.isEmpty()) return;
+        greetedThisRun = true;
+
+        String[] tpl = getResources().getStringArray(R.array.greetings);
+        String phrase = String.format(tpl[(int) (Math.random() * tpl.length)], name);
+
+        final FrameLayout ov = new FrameLayout(this);
+        ov.setBackgroundColor(BG_BOTTOM);
+        ov.setClickable(true);
+        ov.setElevation(dp(34));
+
+        TextView tv = new TextView(this);
+        tv.setText(phrase);
+        tv.setTextSize(26f);
+        tv.setTypeface(null, Typeface.BOLD);
+        tv.setGravity(Gravity.CENTER);
+        tv.setPadding(dp(36), 0, dp(36), 0);
+        tv.setTextColor(textColor);
+        tv.getPaint().setShader(new LinearGradient(
+                0, 0, Math.max(1f, tv.getPaint().measureText(phrase)), 0,
+                accent, textColor, Shader.TileMode.CLAMP));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.CENTER;
+        ov.addView(tv, lp);
+
+        TextView sub = new TextView(this);
+        sub.setText(R.string.app_name);
+        sub.setTextSize(13f);
+        sub.setTypeface(null, Typeface.BOLD);
+        sub.setTextColor(accent);
+        sub.setAlpha(0f);
+        FrameLayout.LayoutParams slp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        slp.gravity = Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM;
+        slp.bottomMargin = dp(48);
+        ov.addView(sub, slp);
+
+        ((ViewGroup) rootFrame).addView(ov, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        tv.setAlpha(0f);
+        tv.setTranslationY(dp(18));
+        tv.setScaleX(0.94f);
+        tv.setScaleY(0.94f);
+        tv.animate().alpha(1f).translationY(0).scaleX(1f).scaleY(1f)
+                .setDuration(600).setStartDelay(150)
+                .setInterpolator(new DecelerateInterpolator(2f)).start();
+        sub.animate().alpha(0.7f).setDuration(600).setStartDelay(500).start();
+
+        final boolean[] done = {false};
+        final Runnable dismiss = () -> {
+            if (done[0]) return;
+            done[0] = true;
+            ov.animate().alpha(0f).setDuration(450)
+                    .withEndAction(() -> ((ViewGroup) rootFrame).removeView(ov)).start();
+        };
+        ui.postDelayed(dismiss, 2700);
+        ov.setOnClickListener(v -> dismiss.run());  // тап — пропустить
+    }
+
+    private void showGreetNameDialog() {
+        final EditText et = new EditText(this);
+        et.setHint(R.string.greet_hint);
+        et.setSingleLine(true);
+        et.setTextColor(textColor);
+        et.setHintTextColor(dimColor);
+        et.setTextSize(15f);
+        et.setBackgroundResource(R.drawable.bg_search);
+        et.setPadding(dp(16), dp(11), dp(16), dp(11));
+        String cur = prefs.getString("user_name", "");
+        if (!cur.isEmpty()) {
+            et.setText(cur);
+            et.setSelection(cur.length());
+        }
+        showStyledDialog(getString(R.string.greet_title), et, getString(R.string.done), () ->
+                prefs.edit().putString("user_name", et.getText().toString().trim()).apply(),
+                null, null);
+        et.requestFocus();
+    }
+
+    private void showFxDialog() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        final Dialog[] ref = new Dialog[1];
+        String[] names = {getString(R.string.fx_sparks),
+                getString(R.string.fx_stars), getString(R.string.fx_comets)};
+        for (int i = 0; i < names.length; i++) {
+            final int m = i;
+            TextView row = menuRow(names[i], m == fxMode ? accent : textColor);
+            row.setOnClickListener(v -> {
+                ref[0].dismiss();
+                fxMode = m;
+                prefs.edit().putInt("fx_mode", m).apply();
+                particles.setMode(m);
+            });
+            box.addView(row);
+        }
+        ref[0] = showStyledDialog(getString(R.string.fx_title), box, null, null,
+                getString(R.string.close), null);
+    }
+
+    /** Плавная «пружинка» при нажатии на кнопки управления. */
+    private void pressAnim(View... views) {
+        View.OnTouchListener l = (v, e) -> {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    v.animate().scaleX(0.82f).scaleY(0.82f).setDuration(90).start();
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    v.animate().scaleX(1f).scaleY(1f)
+                            .setDuration(260)
+                            .setInterpolator(new OvershootInterpolator(2.2f))
+                            .start();
+                    break;
+            }
+            return false;
+        };
+        for (View v : views) v.setOnTouchListener(l);
     }
 
     // ---------- Приветственный экран ----------
@@ -889,33 +1028,53 @@ public class MainActivity extends Activity implements PlayerService.Listener {
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
         if (!onboardOpen) {
-            switch (ev.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    swX = ev.getX();
-                    swY = ev.getY();
-                    swTracking = true;
-                    break;
-                case MotionEvent.ACTION_MOVE:
-                    if (swTracking) {
-                        float dx = ev.getX() - swX;
-                        float dy = ev.getY() - swY;
-                        if (Math.abs(dy) > dp(48) && Math.abs(dy) > Math.abs(dx)) {
-                            swTracking = false;
-                        } else if (lyricsOpen
-                                && dx > dp(64) && Math.abs(dx) > Math.abs(dy) * 1.4f) {
-                            swTracking = false;
-                            closeLyrics();
-                        } else if (!expanded && !drawerOpen && !lyricsOpen
-                                && dx > dp(72) && Math.abs(dx) > Math.abs(dy) * 1.7f) {
-                            swTracking = false;
-                            openDrawer();
-                        } else if (drawerOpen
-                                && dx < -dp(72) && Math.abs(dx) > Math.abs(dy) * 1.7f) {
-                            swTracking = false;
-                            closeDrawer();
-                        }
-                    }
-                    break;
+            int action = ev.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                swX = ev.getX();
+                swY = ev.getY();
+                swTracking = true;
+                swCancelSent = false;
+                swConsumed = false;
+            } else if (swConsumed) {
+                // жест распознан как свайп — остаток не отдаём кнопкам и списку
+                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                    swConsumed = false;
+                }
+                return true;
+            } else if (action == MotionEvent.ACTION_MOVE && swTracking) {
+                float dx = ev.getX() - swX;
+                float dy = ev.getY() - swY;
+                // палец пошёл вбок — снимаем нажатие с трека под ним,
+                // чтобы свайп не запускал воспроизведение случайно
+                if (!swCancelSent && Math.abs(dx) > dp(20)
+                        && Math.abs(dx) > Math.abs(dy) * 1.4f) {
+                    swCancelSent = true;
+                    MotionEvent cancel = MotionEvent.obtain(ev);
+                    cancel.setAction(MotionEvent.ACTION_CANCEL);
+                    super.dispatchTouchEvent(cancel);
+                    cancel.recycle();
+                }
+                if (Math.abs(dy) > dp(48) && Math.abs(dy) > Math.abs(dx)) {
+                    swTracking = false;
+                } else if (lyricsOpen
+                        && dx > dp(64) && Math.abs(dx) > Math.abs(dy) * 1.4f) {
+                    swTracking = false;
+                    swConsumed = true;
+                    closeLyrics();
+                    return true;
+                } else if (!expanded && !drawerOpen && !lyricsOpen
+                        && dx > dp(72) && Math.abs(dx) > Math.abs(dy) * 1.7f) {
+                    swTracking = false;
+                    swConsumed = true;
+                    openDrawer();
+                    return true;
+                } else if (drawerOpen
+                        && dx < -dp(72) && Math.abs(dx) > Math.abs(dy) * 1.7f) {
+                    swTracking = false;
+                    swConsumed = true;
+                    closeDrawer();
+                    return true;
+                }
             }
         }
         return super.dispatchTouchEvent(ev);
@@ -2081,6 +2240,20 @@ public class MainActivity extends Activity implements PlayerService.Listener {
             showThemeDialog();
         }), settingLp());
 
+        String[] fxNames = {getString(R.string.fx_sparks),
+                getString(R.string.fx_stars), getString(R.string.fx_comets)};
+        content.addView(settingButton(getString(R.string.fx_title), fxNames[fxMode], () -> {
+            if (dref[0] != null) dref[0].dismiss();
+            showFxDialog();
+        }), settingLp());
+
+        String uname = prefs.getString("user_name", "");
+        content.addView(settingButton(getString(R.string.greet_title),
+                uname.isEmpty() ? getString(R.string.greet_off) : uname, () -> {
+            if (dref[0] != null) dref[0].dismiss();
+            showGreetNameDialog();
+        }), settingLp());
+
         content.addView(settingButton(getString(R.string.sleep_timer), sleepState, () -> {
             if (dref[0] != null) dref[0].dismiss();
             showSleepDialog();
@@ -2347,10 +2520,14 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 for (Track t : snapshot) idToFile.put(t.id, t.file != null ? t.file : (t.id + ""));
 
                 JSONObject m = new JSONObject();
-                m.put("version", 1);
+                m.put("version", 2);
                 m.put("hasAudio", withAudio);
                 m.put("lang", prefs.getString("lang", "ru"));
                 m.put("powersave", prefs.getBoolean("powersave", false));
+                m.put("sort", prefs.getInt("sort", 0));
+                m.put("frameless", prefs.getBoolean("frameless", false));
+                m.put("fx", prefs.getInt("fx_mode", 0));
+                m.put("name", prefs.getString("user_name", ""));
                 JSONObject eq = new JSONObject();
                 for (int i = 0; i < 8; i++) eq.put("b" + i, prefs.getFloat("eq_b" + i, 0.5f));
                 eq.put("bass", prefs.getFloat("eq_bass", 0f));
@@ -2386,6 +2563,15 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                     if (cf.exists() && t.file != null) {
                         zip.putNextEntry(new java.util.zip.ZipEntry("covers/" + t.file + ".jpg"));
                         copyFileToZip(cf, zip);
+                        zip.closeEntry();
+                    }
+                }
+                // тексты песен (ключ — имя файла трека)
+                for (Track t : snapshot) {
+                    File lf = lyricsFile(t.id);
+                    if (lf.exists() && t.file != null) {
+                        zip.putNextEntry(new java.util.zip.ZipEntry("lyrics/" + t.file + ".txt"));
+                        copyFileToZip(lf, zip);
                         zip.closeEntry();
                     }
                 }
@@ -2457,7 +2643,8 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                         int n;
                         while ((n = zin.read(buf)) > 0) bo.write(buf, 0, n);
                         manifestStr = new String(bo.toByteArray(), StandardCharsets.UTF_8);
-                    } else if (name.startsWith("covers/") || name.startsWith("plcovers/")) {
+                    } else if (name.startsWith("covers/") || name.startsWith("plcovers/")
+                            || name.startsWith("lyrics/")) {
                         File out = new File(tmp, name);
                         out.getParentFile().mkdirs();
                         try (FileOutputStream fo = new FileOutputStream(out)) {
@@ -2554,6 +2741,22 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 if (eq.has("virt")) e.putFloat("eq_virt", (float) eq.getDouble("virt"));
                 if (eq.has("speed")) e.putFloat("speed", (float) eq.getDouble("speed"));
             }
+            boolean needRecreate = false;
+            if (m.has("sort")) {
+                sortMode = m.getInt("sort");
+                e.putInt("sort", sortMode);
+            }
+            if (m.has("fx")) {
+                fxMode = m.getInt("fx");
+                e.putInt("fx_mode", fxMode);
+                particles.setMode(fxMode);
+            }
+            if (m.has("name")) e.putString("user_name", m.getString("name"));
+            if (m.has("powersave")) e.putBoolean("powersave", m.getBoolean("powersave"));
+            if (m.has("frameless") && m.getBoolean("frameless") != frameless) {
+                e.putBoolean("frameless", m.getBoolean("frameless"));
+                needRecreate = true;
+            }
             e.apply();
             PlayerService s = svc();
             if (s != null) s.refreshFx();
@@ -2602,12 +2805,27 @@ public class MainActivity extends Activity implements PlayerService.Listener {
                 }
             }
 
+            // тексты песен: имя файла → новый id
+            File lyricsDir = new File(tmp, "lyrics");
+            if (lyricsDir.isDirectory()) {
+                File[] files = lyricsDir.listFiles();
+                if (files != null) {
+                    for (File lf : files) {
+                        String fn = lf.getName();
+                        if (fn.endsWith(".txt")) fn = fn.substring(0, fn.length() - 4);
+                        Long id = fileToId.get(fn);
+                        if (id != null) copyFile(lf, lyricsFile(id));
+                    }
+                }
+            }
+
             deleteDir(tmp);
             thumbCache.evictAll();
             refreshShown(true);
             String summary = audioRestored > 0
                     ? audioRestored + " " + plural(audioRestored) : getString(R.string.backup);
             Toast.makeText(this, getString(R.string.restore_done, summary), Toast.LENGTH_LONG).show();
+            if (needRecreate) recreate();  // применить восстановленную тему
         } catch (Exception ex) {
             Toast.makeText(this, R.string.restore_fail, Toast.LENGTH_LONG).show();
         }

@@ -78,6 +78,13 @@
     <string name="theme_classic_sub">Обложка в рамке, размытый фон</string>
     <string name="theme_frameless">Безрамочная</string>
     <string name="theme_frameless_sub">Обложка без границ, неоновое свечение</string>
+    <string name="fx_title">Эффекты</string>
+    <string name="fx_sparks">Огоньки</string>
+    <string name="fx_stars">Звёзды</string>
+    <string name="fx_comets">Кометы</string>
+    <string name="greet_title">Приветствие</string>
+    <string name="greet_hint">Ваше имя</string>
+    <string name="greet_off">Выкл</string>
     <string name="sleep_timer">Таймер сна</string>
     <string name="sleep_off">Выключить</string>
     <string name="sleep_end">Конец трека</string>
@@ -97,7 +104,15 @@
     <string name="restore_fail">Не удалось прочитать копию</string>
     <string name="power_save">Энергосбережение</string>
     <string name="power_save_sub">Отключает анимации, огоньки и размытие</string>
-    <string name="version_link">Fable Player v1.5 · открытый код на GitHub</string>
+    <string name="version_link">Fable Player v1.6 · открытый код на GitHub</string>
+    <string-array name="greetings">
+        <item>Что будем слушать сегодня, %s?</item>
+        <item>С возвращением, %s!</item>
+        <item>Привет, %s! Погнали 🎧</item>
+        <item>Музыка уже ждёт, %s</item>
+        <item>Хорошего звучания, %s!</item>
+        <item>%s, отличный день для музыки</item>
+    </string-array>
     <string name="exit_q">Выйти из Fable Player?</string>
     <string name="exit_yes">Выйти</string>
     <string name="exit_no">Остаться</string>
