@@ -4,256 +4,470 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Fable Player — музыка, которая красит всё вокруг</title>
-<meta name="description" content="Тёмный музыкальный плеер для Android. Интерфейс подстраивается под цвет обложки трека. Плейлисты, эквалайзер, без рекламы. Открытый код.">
+<meta name="description" content="Тёмный музыкальный плеер для Android. Интерфейс перекрашивается под цвет обложки трека. Тексты песен, эквалайзер, эффекты, без рекламы. Открытый код.">
+<meta name="theme-color" content="#0a0a10">
+<meta property="og:title" content="Fable Player — музыка, которая красит всё вокруг">
+<meta property="og:description" content="Бесплатный плеер для Android без рекламы. Каждый альбом перекрашивает интерфейс в свой цвет.">
+<meta property="og:image" content="https://raw.githubusercontent.com/GuardionSpend/fable-player/main/icon-512.png">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 108 108'%3E%3Cpath fill='%2314101F' d='M22 0h64a22 22 0 0 1 22 22v64a22 22 0 0 1-22 22H22A22 22 0 0 1 0 86V22A22 22 0 0 1 22 0z'/%3E%3Cpath fill='%238C6FFF' d='M66 24v37.1c-2.4-1.4-5.1-2.1-8-2.1-8.8 0-16 7.2-16 16s7.2 16 16 16 16-7.2 16-16V40h12V24H66z'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;800&family=Unbounded:wght@600;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;900&family=Manrope:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
 :root{
-  --ac:#8c6fff;
-  --ac-soft:rgba(140,111,255,.16);
-  --bg:#0e0e14;
-  --bg2:#12121c;
-  --card:rgba(255,255,255,.04);
+  --ac:#8C6FFF;
+  --ac-deep:#4C1D95;
+  --ac-soft:rgba(140,111,255,.14);
+  --ac-glow:rgba(140,111,255,.55);
+  --bg:#0a0a10;
+  --panel:rgba(255,255,255,.035);
   --line:rgba(255,255,255,.09);
-  --txt:#f2f2f7;
-  --dim:#9a9aa8;
-  --r:24px;
+  --txt:#f4f4f8;
+  --dim:#9b9bab;
+  --r:26px;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
 body{
-  background:var(--bg);
-  color:var(--txt);
+  background:var(--bg);color:var(--txt);
   font-family:'Manrope',system-ui,sans-serif;
   overflow-x:hidden;
-  transition:background .8s;
 }
-::selection{background:var(--ac);color:#0e0e14}
+::selection{background:var(--ac);color:#0a0a10}
+::-webkit-scrollbar{width:9px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--ac) 45%,#222);border-radius:9px}
+a{color:inherit}
+h1,h2,.disp{font-family:'Unbounded',sans-serif}
 
-/* ---------- фоновые свечения ---------- */
-.glow{position:fixed;border-radius:50%;filter:blur(120px);opacity:.55;pointer-events:none;z-index:0;transition:background 1.2s}
-.glow.g1{width:60vw;height:60vw;background:var(--ac-soft);top:-20vw;left:-15vw;animation:drift1 18s ease-in-out infinite alternate}
-.glow.g2{width:50vw;height:50vw;background:var(--ac-soft);bottom:-25vw;right:-15vw;animation:drift2 22s ease-in-out infinite alternate}
-@keyframes drift1{from{transform:translate(0,0) scale(1)}to{transform:translate(8vw,6vh) scale(1.15)}}
-@keyframes drift2{from{transform:translate(0,0) scale(1.1)}to{transform:translate(-7vw,-5vh) scale(.95)}}
-
-#fx{position:fixed;inset:0;z-index:1;pointer-events:none}
-
-/* ---------- шапка ---------- */
-header{
-  position:fixed;top:0;left:0;right:0;z-index:50;
-  display:flex;align-items:center;justify-content:space-between;
-  padding:18px clamp(20px,5vw,56px);
-  background:rgba(14,14,20,.55);
-  backdrop-filter:blur(18px);
-  -webkit-backdrop-filter:blur(18px);
-  border-bottom:1px solid var(--line);
+/* ============ ЗАСТАВКА ============ */
+#splash{
+  position:fixed;inset:0;z-index:200;background:var(--bg);
+  display:flex;align-items:center;justify-content:center;
+  transition:transform .65s cubic-bezier(.7,0,.3,1),opacity .5s;
 }
-.logo{font-family:'Unbounded',sans-serif;font-weight:800;font-size:18px;letter-spacing:.5px;text-decoration:none;
-  background:linear-gradient(90deg,var(--ac),var(--txt));-webkit-background-clip:text;background-clip:text;color:transparent;transition:all 1s}
-nav{display:flex;gap:8px}
-nav a{color:var(--dim);text-decoration:none;font-size:14px;font-weight:600;padding:8px 14px;border-radius:12px;transition:.25s}
-nav a:hover{color:var(--txt);background:var(--card)}
-@media(max-width:640px){nav a.hide-m{display:none}}
-
-/* ---------- hero ---------- */
-.hero{
-  position:relative;z-index:2;
-  min-height:100svh;
-  display:flex;align-items:center;justify-content:center;gap:clamp(30px,6vw,90px);
-  flex-wrap:wrap;
-  padding:120px clamp(20px,6vw,70px) 70px;
-}
-.hero-txt{max-width:560px}
-.chip{
-  display:inline-flex;align-items:center;gap:8px;
-  font-size:12.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ac);
-  border:1px solid var(--ac);border-radius:999px;padding:7px 16px;margin-bottom:26px;
-  background:var(--ac-soft);transition:all 1s;
-  animation:pulse 3s ease-in-out infinite;
-}
-@keyframes pulse{0%,100%{box-shadow:0 0 0 0 var(--ac-soft)}50%{box-shadow:0 0 0 9px transparent}}
-h1{
-  font-family:'Unbounded',sans-serif;font-weight:800;
-  font-size:clamp(38px,6vw,72px);line-height:1.04;letter-spacing:-.5px;
-}
-h1 .grad{
-  background:linear-gradient(90deg,var(--ac) 0%,#fff 55%,var(--ac) 100%);
-  background-size:200% auto;
+#splash.off{transform:translateY(-100%);opacity:.4;pointer-events:none}
+#splash-word{
+  font-family:'Unbounded';font-weight:900;font-size:clamp(24px,5vw,54px);
+  background:linear-gradient(90deg,var(--ac),#fff);
   -webkit-background-clip:text;background-clip:text;color:transparent;
-  animation:shine 5s linear infinite;
+  animation:wordin .38s ease both;text-align:center;padding:0 24px;
 }
-@keyframes shine{to{background-position:200% center}}
-.sub{color:var(--dim);font-size:clamp(15px,1.6vw,18.5px);line-height:1.7;margin:26px 0 38px;max-width:480px}
+@keyframes wordin{from{opacity:0;transform:translateY(14px) scale(.96)}to{opacity:1;transform:none}}
+
+/* ============ ФОНОВЫЕ СЛОИ ============ */
+#fx{position:fixed;inset:0;z-index:1;pointer-events:none}
+.aurora{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+.aurora i{
+  position:absolute;border-radius:50%;filter:blur(110px);opacity:.5;
+  transition:background 1.4s;
+}
+.aurora i:nth-child(1){width:55vmax;height:55vmax;background:var(--ac-soft);top:-22vmax;left:-12vmax;animation:dr1 21s ease-in-out infinite alternate}
+.aurora i:nth-child(2){width:45vmax;height:45vmax;background:var(--ac-soft);bottom:-20vmax;right:-12vmax;animation:dr2 26s ease-in-out infinite alternate}
+.aurora i:nth-child(3){width:30vmax;height:30vmax;background:var(--ac-soft);top:40%;left:55%;opacity:.3;animation:dr1 33s ease-in-out infinite alternate-reverse}
+@keyframes dr1{to{transform:translate(9vmax,7vmax) scale(1.2)}}
+@keyframes dr2{to{transform:translate(-8vmax,-6vmax) scale(.9)}}
+.noise{
+  position:fixed;inset:0;z-index:2;pointer-events:none;opacity:.05;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='.6'/%3E%3C/svg%3E");
+}
+#cursor{
+  position:fixed;z-index:3;width:340px;height:340px;border-radius:50%;
+  background:radial-gradient(circle,var(--ac-soft),transparent 65%);
+  pointer-events:none;transform:translate(-50%,-50%);opacity:0;transition:opacity .4s;
+  mix-blend-mode:screen;
+}
+#seek{
+  position:fixed;top:0;left:0;height:3px;width:0;z-index:150;
+  background:linear-gradient(90deg,var(--ac-deep),var(--ac));
+  box-shadow:0 0 12px var(--ac-glow);transition:background 1s;
+}
+
+/* ============ НАВИГАЦИЯ ============ */
+nav{
+  position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:120;
+  display:flex;align-items:center;gap:4px;
+  background:rgba(12,12,20,.6);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border:1px solid var(--line);border-radius:999px;padding:7px 8px 7px 18px;
+  box-shadow:0 8px 40px -12px rgba(0,0,0,.7);
+  white-space:nowrap;max-width:calc(100vw - 24px);
+}
+nav .logo{
+  font-family:'Unbounded';font-weight:900;font-size:14px;margin-right:10px;text-decoration:none;
+  background:linear-gradient(90deg,var(--ac),#fff);-webkit-background-clip:text;background-clip:text;color:transparent;
+}
+nav a.lnk{
+  font-size:13px;font-weight:600;color:var(--dim);text-decoration:none;
+  padding:8px 13px;border-radius:999px;transition:.25s;
+}
+nav a.lnk:hover{color:var(--txt);background:var(--panel)}
+nav a.get{
+  font-size:13px;font-weight:800;color:#0a0a10;text-decoration:none;
+  background:var(--ac);padding:8px 16px;border-radius:999px;transition:.3s;
+  box-shadow:0 4px 20px -4px var(--ac-glow);
+}
+nav a.get:hover{transform:scale(1.05)}
+@media(max-width:600px){nav a.hide-m{display:none}}
+
+/* ============ HERO ============ */
+.hero{
+  position:relative;z-index:4;min-height:100svh;
+  display:flex;align-items:center;justify-content:center;
+  gap:clamp(24px,5vw,80px);flex-wrap:wrap;
+  padding:110px clamp(18px,5vw,64px) 60px;
+}
+.hero-copy{max-width:640px}
+.chip{
+  display:inline-flex;align-items:center;gap:9px;margin-bottom:28px;
+  font-size:12px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--ac);border:1px solid color-mix(in srgb,var(--ac) 55%,transparent);
+  background:var(--ac-soft);border-radius:999px;padding:8px 16px;
+  animation:chipPulse 3.2s ease-in-out infinite;transition:color 1s,border-color 1s;
+}
+.chip .dot{width:7px;height:7px;border-radius:50%;background:var(--ac);box-shadow:0 0 10px var(--ac)}
+@keyframes chipPulse{0%,100%{box-shadow:0 0 0 0 var(--ac-soft)}50%{box-shadow:0 0 0 10px transparent}}
+h1{
+  font-weight:900;font-size:clamp(34px,5.6vw,76px);line-height:1.02;letter-spacing:-.5px;
+  text-transform:uppercase;
+}
+h1 .row{display:block;overflow:hidden}
+h1 .row span{display:block;transform:translateY(115%);animation:rise .9s cubic-bezier(.2,.7,.2,1) forwards}
+h1 .row:nth-child(1) span{animation-delay:1.55s}
+h1 .row:nth-child(2) span{animation-delay:1.68s}
+h1 .row:nth-child(3) span{animation-delay:1.81s}
+@keyframes rise{to{transform:none}}
+h1 .grad{
+  background:linear-gradient(90deg,var(--ac) 0%,#fff 50%,var(--ac) 100%);
+  background-size:220% auto;-webkit-background-clip:text;background-clip:text;color:transparent;
+  animation:rise .9s cubic-bezier(.2,.7,.2,1) 1.68s forwards,shine 5s linear 2.6s infinite;
+}
+@keyframes shine{to{background-position:220% center}}
+.sub{
+  color:var(--dim);font-size:clamp(15px,1.5vw,18.5px);line-height:1.75;
+  margin:28px 0 38px;max-width:520px;
+}
 .sub b{color:var(--txt)}
-.btns{display:flex;gap:14px;flex-wrap:wrap}
+.sub .acc{color:var(--ac);font-weight:800;transition:color 1s}
+.btns{display:flex;gap:13px;flex-wrap:wrap}
 .btn{
-  display:inline-flex;align-items:center;gap:10px;
-  font-family:inherit;font-weight:800;font-size:15px;text-decoration:none;
-  padding:16px 28px;border-radius:18px;transition:.3s;cursor:pointer;
+  display:inline-flex;align-items:center;gap:10px;text-decoration:none;cursor:pointer;
+  font-weight:800;font-size:15px;padding:16px 26px;border-radius:18px;transition:.3s;
+  border:1px solid transparent;
 }
 .btn svg{width:19px;height:19px;flex:none}
 .btn.primary{
-  background:var(--ac);color:#0e0e14;
-  box-shadow:0 10px 40px -8px var(--ac);
+  background:var(--ac);color:#0a0a10;position:relative;
+  box-shadow:0 10px 44px -8px var(--ac-glow);
 }
-.btn.primary:hover{transform:translateY(-3px) scale(1.02);box-shadow:0 18px 56px -8px var(--ac)}
+.btn.primary:hover{transform:translateY(-3px) scale(1.02);box-shadow:0 18px 60px -8px var(--ac-glow)}
 .btn.ghost{
-  color:var(--txt);border:1px solid var(--line);background:var(--card);
-  backdrop-filter:blur(10px);
+  color:var(--txt);border-color:var(--line);background:var(--panel);
+  backdrop-filter:blur(8px);
 }
 .btn.ghost:hover{transform:translateY(-3px);border-color:var(--ac);color:var(--ac)}
+.scroll-hint{
+  position:absolute;bottom:26px;left:50%;transform:translateX(-50%);
+  color:var(--dim);font-size:11px;letter-spacing:.25em;text-transform:uppercase;
+  display:flex;flex-direction:column;align-items:center;gap:8px;opacity:.7;
+}
+.scroll-hint i{
+  width:1px;height:34px;background:linear-gradient(var(--ac),transparent);
+  display:block;animation:drop 1.6s ease-in-out infinite;
+}
+@keyframes drop{0%{transform:scaleY(0);transform-origin:top}50%{transform:scaleY(1);transform-origin:top}51%{transform-origin:bottom}100%{transform:scaleY(0);transform-origin:bottom}}
 
-/* ---------- макет телефона ---------- */
-.phone-wrap{position:relative;animation:float 7s ease-in-out infinite}
-@keyframes float{0%,100%{transform:translateY(0) rotate(-1.2deg)}50%{transform:translateY(-20px) rotate(1.2deg)}}
+/* ---- телефон ---- */
+.phone-scene{position:relative;perspective:1400px;animation:float 7.5s ease-in-out infinite}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-18px)}}
+.phone-glow{
+  position:absolute;inset:-12%;z-index:-1;border-radius:50%;
+  background:radial-gradient(circle,var(--ac-glow),transparent 68%);
+  opacity:.45;filter:blur(30px);transition:background 1.2s;
+}
 .phone{
-  width:300px;height:620px;border-radius:46px;
-  background:linear-gradient(160deg,#15151f,#0b0b11);
-  border:1px solid var(--line);
-  box-shadow:0 40px 90px -20px rgba(0,0,0,.8),0 0 90px -30px var(--ac);
-  padding:18px;position:relative;transition:box-shadow 1.2s;
+  width:min(300px,78vw);aspect-ratio:300/632;border-radius:46px;
+  background:linear-gradient(165deg,#14141e,#0a0a11);
+  border:1px solid color-mix(in srgb,var(--ac) 30%,var(--line));
+  box-shadow:0 44px 90px -24px rgba(0,0,0,.85);
+  padding:14px;will-change:transform;transition:border-color 1.2s;
 }
-.notch{width:90px;height:24px;border-radius:14px;background:#06060a;margin:2px auto 14px}
-.scr{height:calc(100% - 40px);border-radius:32px;overflow:hidden;display:flex;flex-direction:column;
-  background:linear-gradient(180deg,color-mix(in srgb,var(--ac) 22%,#0e0e14),#0e0e14);transition:background 1.2s;padding:22px 20px}
+.scr{
+  height:100%;border-radius:34px;overflow:hidden;position:relative;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--ac) 26%,#0a0a10) 0%,color-mix(in srgb,var(--ac) 10%,#0a0a10) 42%,#0a0a10 100%);
+  display:flex;flex-direction:column;padding:18px 18px 14px;transition:background 1.2s;
+}
+.status{display:flex;justify-content:space-between;color:var(--dim);font-size:10.5px;font-weight:600;margin-bottom:12px}
+.cover-zone{position:relative;display:flex;align-items:center;justify-content:center;margin:4px 0 12px}
+.cover-glow{
+  position:absolute;width:82%;aspect-ratio:1;border-radius:30px;
+  background:var(--ac);filter:blur(38px);opacity:.4;transition:background 1.2s;
+}
 .cover{
-  width:100%;aspect-ratio:1;border-radius:22px;margin-bottom:20px;position:relative;overflow:hidden;
-  background:conic-gradient(from var(--rot,0deg),var(--ac),#1b1b27 40%,var(--ac) 75%,#2a2a3a);
-  animation:spin 14s linear infinite;box-shadow:0 16px 44px -12px rgba(0,0,0,.7);
+  position:relative;width:88%;aspect-ratio:1;
+  background:linear-gradient(135deg,var(--ac),var(--ac-deep));
+  -webkit-mask-image:radial-gradient(closest-side,#000 58%,transparent 98%);
+  mask-image:radial-gradient(closest-side,#000 58%,transparent 98%);
+  display:flex;align-items:center;justify-content:center;transition:background 1.2s;
 }
-@property --rot{syntax:'<angle>';initial-value:0deg;inherits:false}
-@keyframes spin{to{--rot:360deg}}
-.cover::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 32% 28%,rgba(255,255,255,.22),transparent 55%)}
-.t1{font-weight:800;font-size:17px}
-.t2{color:var(--dim);font-size:13px;margin-top:3px}
-.bar{height:4px;border-radius:4px;background:rgba(255,255,255,.12);margin:18px 0 8px;overflow:hidden}
-.bar i{display:block;height:100%;width:40%;border-radius:4px;background:var(--ac);animation:prog 16s linear infinite;transition:background 1.2s}
-@keyframes prog{from{width:2%}to{width:98%}}
-.tt{display:flex;justify-content:space-between;color:var(--dim);font-size:10.5px}
-.ctr{display:flex;align-items:center;justify-content:space-around;margin-top:18px}
-.ctr svg{width:22px;height:22px;fill:var(--txt);opacity:.85}
+.cover svg{width:34%;height:34%;fill:rgba(255,255,255,.9);filter:drop-shadow(0 4px 18px rgba(0,0,0,.4))}
+.t1{font-weight:800;font-size:16.5px;text-align:center}
+.t2{color:var(--dim);font-size:12px;text-align:center;margin-top:2px}
+.bar{height:4px;border-radius:4px;background:rgba(255,255,255,.12);margin:14px 2px 7px;overflow:hidden}
+.bar i{display:block;height:100%;width:35%;border-radius:4px;background:var(--ac);animation:prog 18s linear infinite;transition:background 1.2s}
+@keyframes prog{from{width:3%}to{width:97%}}
+.tt{display:flex;justify-content:space-between;color:var(--dim);font-size:10px;padding:0 2px}
+.ctr{display:flex;align-items:center;justify-content:space-around;margin-top:12px}
+.ctr svg{width:20px;height:20px;fill:var(--txt);opacity:.85}
 .play{
-  width:62px;height:62px;border-radius:50%;background:var(--ac);
+  width:58px;height:58px;border-radius:50%;position:relative;
   display:flex;align-items:center;justify-content:center;
-  box-shadow:0 10px 30px -6px var(--ac);transition:background 1.2s,box-shadow 1.2s;
-  animation:beat 2.2s ease-in-out infinite;
+  background:radial-gradient(circle,var(--ac-soft) 0%,transparent 70%);
+  animation:beat 2.4s ease-in-out infinite;
 }
-@keyframes beat{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
-.play svg{fill:#0e0e14;opacity:1}
-.eqz{display:flex;gap:4px;align-items:flex-end;height:26px;margin-top:auto;justify-content:center;padding-top:18px}
-.eqz i{width:5px;border-radius:3px;background:var(--ac);opacity:.85;animation:eq 1s ease-in-out infinite;transition:background 1.2s}
-.eqz i:nth-child(1){animation-delay:0s;height:40%}.eqz i:nth-child(2){animation-delay:.15s;height:90%}
-.eqz i:nth-child(3){animation-delay:.3s;height:60%}.eqz i:nth-child(4){animation-delay:.45s;height:100%}
-.eqz i:nth-child(5){animation-delay:.6s;height:50%}.eqz i:nth-child(6){animation-delay:.2s;height:80%}
-.eqz i:nth-child(7){animation-delay:.5s;height:35%}
-@keyframes eq{0%,100%{transform:scaleY(.5)}50%{transform:scaleY(1.1)}}
+.play::before{
+  content:'';position:absolute;inset:6px;border-radius:50%;
+  background:var(--ac);filter:blur(14px);opacity:.55;transition:background 1.2s;
+}
+.play svg{position:relative;width:24px;height:24px;fill:#fff;opacity:1}
+@keyframes beat{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+.eqz{display:flex;gap:4px;align-items:flex-end;height:22px;justify-content:center;margin-top:auto;padding-top:12px}
+.eqz i{width:4.5px;border-radius:3px;background:var(--ac);opacity:.85;animation:eq 1.05s ease-in-out infinite;transition:background 1.2s}
+.eqz i:nth-child(1){animation-delay:0s;height:38%}.eqz i:nth-child(2){animation-delay:.14s;height:88%}
+.eqz i:nth-child(3){animation-delay:.28s;height:58%}.eqz i:nth-child(4){animation-delay:.42s;height:100%}
+.eqz i:nth-child(5){animation-delay:.2s;height:48%}.eqz i:nth-child(6){animation-delay:.5s;height:78%}
+.eqz i:nth-child(7){animation-delay:.34s;height:34%}
+@keyframes eq{0%,100%{transform:scaleY(.45)}50%{transform:scaleY(1.08)}}
 
-/* ---------- секции ---------- */
-section{position:relative;z-index:2;padding:90px clamp(20px,6vw,70px);max-width:1200px;margin:0 auto}
-.sec-chip{color:var(--ac);font-weight:800;letter-spacing:.18em;text-transform:uppercase;font-size:12px;transition:color 1s}
-h2{font-family:'Unbounded',sans-serif;font-size:clamp(26px,3.6vw,42px);font-weight:800;margin:14px 0 18px;line-height:1.15}
-.lead{color:var(--dim);font-size:16.5px;line-height:1.75;max-width:640px}
+/* ============ БЕГУЩАЯ СТРОКА ============ */
+.ticker{
+  position:relative;z-index:4;overflow:hidden;
+  border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+  background:rgba(255,255,255,.018);
+}
+.tk{display:flex;width:max-content;animation:tick 30s linear infinite}
+.tk span{
+  font-family:'Unbounded';font-weight:700;font-size:12.5px;letter-spacing:.18em;
+  color:var(--dim);padding:15px 18px;white-space:nowrap;
+}
+.tk b{color:var(--ac);font-weight:700;transition:color 1s}
+@keyframes tick{to{transform:translateX(-50%)}}
 
-/* карточки */
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(265px,1fr));gap:18px;margin-top:48px}
+/* ============ СЕКЦИИ ============ */
+section{position:relative;z-index:4;max-width:1220px;margin:0 auto;padding:clamp(70px,9vw,120px) clamp(18px,5vw,64px)}
+.lbl{
+  display:flex;align-items:center;gap:14px;margin-bottom:18px;
+  color:var(--ac);font-family:'Unbounded';font-weight:700;font-size:12px;letter-spacing:.28em;text-transform:uppercase;
+  transition:color 1s;
+}
+.lbl::after{content:'';height:1px;flex:0 0 64px;background:linear-gradient(90deg,var(--ac),transparent)}
+h2{font-weight:900;font-size:clamp(26px,3.8vw,48px);line-height:1.12;text-transform:uppercase;letter-spacing:-.3px;margin-bottom:16px}
+h2 .grad{background:linear-gradient(90deg,var(--ac),#fff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lead{color:var(--dim);font-size:16.5px;line-height:1.75;max-width:620px}
+
+/* ---- палитра-альбомы ---- */
+.albums{
+  display:grid;grid-template-columns:repeat(6,1fr);gap:18px;margin-top:52px;
+}
+@media(max-width:980px){.albums{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:560px){
+  .albums{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;padding-bottom:14px;margin-inline:-18px;padding-inline:18px}
+  .albums .alb{flex:0 0 42vw;scroll-snap-align:center}
+}
+.alb{cursor:pointer;text-align:center;transition:transform .4s cubic-bezier(.2,.7,.3,1.3)}
+.alb:nth-child(odd){transform:rotate(-2.5deg)}
+.alb:nth-child(even){transform:rotate(2deg)}
+.alb:hover{transform:rotate(0) translateY(-10px) scale(1.05);z-index:2}
+.alb .art{
+  aspect-ratio:1;border-radius:20px;position:relative;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 18px 40px -14px rgba(0,0,0,.7);
+  border:1px solid rgba(255,255,255,.12);transition:box-shadow .4s;
+}
+.alb .art::after{content:'';position:absolute;inset:0;background:radial-gradient(circle at 30% 25%,rgba(255,255,255,.28),transparent 55%)}
+.alb .art svg{width:34%;height:34%;fill:rgba(255,255,255,.92);position:relative;z-index:1}
+.alb.on .art{outline:2px solid #fff;outline-offset:4px;box-shadow:0 20px 54px -12px var(--ac-glow)}
+.alb .nm{font-weight:800;font-size:13px;margin-top:13px}
+.alb .ar{color:var(--dim);font-size:11.5px;margin-top:1px}
+.pal-note{color:var(--dim);font-size:13px;margin-top:30px}
+.pal-note b{color:var(--ac);transition:color 1s}
+
+/* ---- bento ---- */
+.bento{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:52px}
+@media(max-width:980px){.bento{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:600px){.bento{grid-template-columns:1fr}}
 .card{
-  background:var(--card);border:1px solid var(--line);border-radius:var(--r);
-  padding:30px 26px;transition:.35s;position:relative;overflow:hidden;
+  position:relative;overflow:hidden;border-radius:var(--r);
+  background:var(--panel);border:1px solid var(--line);
+  padding:26px;transition:transform .35s,border-color .35s;
 }
 .card::before{
-  content:'';position:absolute;inset:0;opacity:0;transition:.4s;
+  content:'';position:absolute;inset:0;opacity:0;transition:.4s;pointer-events:none;
   background:radial-gradient(420px circle at var(--mx,50%) var(--my,0%),var(--ac-soft),transparent 65%);
 }
-.card:hover{transform:translateY(-6px);border-color:color-mix(in srgb,var(--ac) 45%,transparent)}
+.card:hover{transform:translateY(-5px);border-color:color-mix(in srgb,var(--ac) 45%,transparent)}
 .card:hover::before{opacity:1}
+.card.w2{grid-column:span 2}
+@media(max-width:600px){.card.w2{grid-column:span 1}}
+.card h3{font-family:'Unbounded';font-weight:700;font-size:16px;margin-bottom:9px;position:relative}
+.card p{color:var(--dim);font-size:13.5px;line-height:1.65;position:relative}
 .card .ico{
-  width:48px;height:48px;border-radius:15px;display:flex;align-items:center;justify-content:center;
-  background:var(--ac-soft);margin-bottom:18px;transition:background 1s;
+  width:44px;height:44px;border-radius:14px;margin-bottom:16px;position:relative;
+  background:var(--ac-soft);display:flex;align-items:center;justify-content:center;transition:background 1s;
 }
-.card .ico svg{width:24px;height:24px;fill:var(--ac);transition:fill 1s}
-.card h3{font-size:17.5px;margin-bottom:9px}
-.card p{color:var(--dim);font-size:14px;line-height:1.65}
-
-/* интерактив: палитра */
-.palette{display:flex;gap:14px;flex-wrap:wrap;margin-top:34px;align-items:center}
-.dot{
-  width:46px;height:46px;border-radius:50%;cursor:pointer;border:2px solid transparent;
-  transition:.25s;box-shadow:0 6px 22px -6px rgba(0,0,0,.6);
+.card .ico svg{width:22px;height:22px;fill:var(--ac);transition:fill 1s}
+/* эффекты-переключатель */
+.fx-pills{display:flex;gap:9px;margin-top:18px;position:relative;flex-wrap:wrap}
+.fx-pill{
+  font-family:'Manrope';font-weight:800;font-size:13px;cursor:pointer;
+  padding:10px 18px;border-radius:999px;border:1px solid var(--line);
+  background:transparent;color:var(--dim);transition:.3s;
 }
-.dot:hover{transform:scale(1.16)}
-.dot.on{border-color:#fff;transform:scale(1.16)}
-.pal-hint{color:var(--dim);font-size:13px;width:100%;margin-top:6px}
+.fx-pill:hover{color:var(--txt);border-color:var(--ac)}
+.fx-pill.on{background:var(--ac);color:#0a0a10;border-color:var(--ac);box-shadow:0 4px 18px -4px var(--ac-glow)}
+/* караоке */
+.kar{margin-top:16px;display:flex;flex-direction:column;gap:9px;position:relative}
+.kl{color:var(--dim);font-size:14.5px;font-weight:600;transition:.5s;opacity:.45}
+.kl.on{
+  opacity:1;transform:translateX(8px) scale(1.02);transform-origin:left;
+  background:linear-gradient(90deg,var(--ac),#fff);
+  -webkit-background-clip:text;background-clip:text;color:transparent;font-weight:800;
+}
+/* эквалайзер-карточка */
+.eq-demo{display:flex;gap:6px;align-items:flex-end;height:56px;margin-top:18px;position:relative}
+.eq-demo i{flex:1;border-radius:5px;background:linear-gradient(180deg,var(--ac),var(--ac-deep));animation:eq 1.15s ease-in-out infinite;transition:background 1s}
+.eq-demo i:nth-child(1){height:35%}.eq-demo i:nth-child(2){height:80%;animation-delay:.13s}
+.eq-demo i:nth-child(3){height:55%;animation-delay:.26s}.eq-demo i:nth-child(4){height:95%;animation-delay:.39s}
+.eq-demo i:nth-child(5){height:45%;animation-delay:.19s}.eq-demo i:nth-child(6){height:70%;animation-delay:.45s}
+.speed-pill{display:inline-block;margin-top:14px;font-size:11.5px;font-weight:800;color:var(--ac);border:1px dashed color-mix(in srgb,var(--ac) 55%,transparent);border-radius:999px;padding:5px 12px;position:relative}
+/* приветствие */
+.hi-row{display:flex;gap:9px;margin-top:16px;position:relative}
+.hi-row input{
+  flex:1;min-width:0;background:rgba(255,255,255,.05);border:1px solid var(--line);
+  border-radius:13px;padding:12px 15px;color:var(--txt);font-family:inherit;font-size:14px;outline:none;transition:.3s;
+}
+.hi-row input:focus{border-color:var(--ac)}
+.hi-row button{
+  background:var(--ac);border:none;border-radius:13px;padding:0 18px;cursor:pointer;
+  color:#0a0a10;font-weight:800;font-size:14px;font-family:inherit;transition:.3s;
+}
+.hi-row button:hover{transform:scale(1.05)}
+.hi-out{
+  margin-top:15px;min-height:26px;font-family:'Unbounded';font-weight:700;font-size:15px;position:relative;
+  background:linear-gradient(90deg,var(--ac),#fff);-webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.hi-out.pop{animation:pop .5s cubic-bezier(.2,.7,.3,1.4)}
+@keyframes pop{from{opacity:0;transform:translateY(10px) scale(.95)}to{opacity:1;transform:none}}
+/* иконки */
+.icons-row{display:flex;gap:12px;margin-top:18px;position:relative;flex-wrap:wrap}
+.aicon{
+  width:56px;height:56px;border-radius:16px;cursor:pointer;position:relative;
+  display:flex;align-items:center;justify-content:center;
+  transition:transform .35s cubic-bezier(.2,.7,.3,1.5),box-shadow .35s;
+  border:1px solid rgba(255,255,255,.14);
+}
+.aicon:hover{transform:translateY(-6px) rotate(-4deg);box-shadow:0 14px 30px -8px rgba(0,0,0,.7)}
+.aicon svg{width:52%;height:52%}
 
-/* CTA */
+/* ---- статистика ---- */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;text-align:center}
+@media(max-width:760px){.stats{grid-template-columns:repeat(2,1fr)}}
+.stat .n{
+  font-family:'Unbounded';font-weight:900;font-size:clamp(38px,5.5vw,64px);line-height:1;
+  background:linear-gradient(180deg,#fff,var(--ac));-webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.stat .d{color:var(--dim);font-size:13px;font-weight:600;margin-top:10px;letter-spacing:.08em;text-transform:uppercase}
+
+/* ---- CTA ---- */
 .cta{
-  text-align:center;border:1px solid var(--line);border-radius:34px;
-  background:linear-gradient(180deg,var(--ac-soft),transparent 70%);
-  padding:clamp(50px,7vw,90px) 28px;transition:background 1.2s;
+  text-align:center;border-radius:40px;padding:clamp(54px,8vw,100px) 26px;position:relative;overflow:hidden;
+  border:1px solid color-mix(in srgb,var(--ac) 35%,var(--line));
+  background:
+    radial-gradient(600px circle at 50% -10%,var(--ac-soft),transparent 70%),
+    linear-gradient(180deg,rgba(255,255,255,.03),transparent);
 }
-.cta .btns{justify-content:center;margin-top:36px}
+.cta h2{margin-bottom:14px}
+.cta .lead{margin:0 auto 38px}
+.cta .btns{justify-content:center}
 
-/* футер */
-footer{
-  position:relative;z-index:2;border-top:1px solid var(--line);
-  padding:46px clamp(20px,6vw,70px);max-width:1200px;margin:40px auto 0;
-  display:flex;justify-content:space-between;gap:26px;flex-wrap:wrap;align-items:center;
+/* ---- футер ---- */
+footer{position:relative;z-index:4;overflow:hidden;padding:40px 0 34px;border-top:1px solid var(--line)}
+.giant{
+  font-family:'Unbounded';font-weight:900;text-align:center;white-space:nowrap;
+  font-size:clamp(56px,13.5vw,210px);line-height:.9;user-select:none;pointer-events:none;
+  color:transparent;-webkit-text-stroke:1px color-mix(in srgb,var(--ac) 55%,transparent);
+  opacity:.22;letter-spacing:.02em;transition:-webkit-text-stroke 1s;
 }
-footer .who{color:var(--dim);font-size:13.5px;line-height:2}
-footer a{color:var(--txt);text-decoration:none;font-weight:700;transition:.2s}
-footer a:hover{color:var(--ac)}
-.mini-logo{font-family:'Unbounded',sans-serif;font-weight:800;font-size:15px;color:var(--ac);transition:color 1s}
+.foot{
+  max-width:1220px;margin:44px auto 0;padding:0 clamp(18px,5vw,64px);
+  display:flex;justify-content:space-between;gap:30px;flex-wrap:wrap;
+}
+.foot .who{color:var(--dim);font-size:13.5px;line-height:2.1}
+.foot a{color:var(--txt);text-decoration:none;font-weight:700;transition:.2s}
+.foot a:hover{color:var(--ac)}
+.foot .cols{display:flex;gap:clamp(28px,6vw,90px);flex-wrap:wrap}
+.foot .h{font-family:'Unbounded';font-size:11px;font-weight:700;letter-spacing:.22em;color:var(--ac);text-transform:uppercase;margin-bottom:10px;transition:color 1s}
+.copy{color:var(--dim);font-size:12px;text-align:center;margin-top:40px;opacity:.7}
+.copy a{color:var(--dim)}
 
-/* появление при скролле */
-.rv{opacity:0;transform:translateY(34px);transition:opacity .8s cubic-bezier(.2,.7,.3,1),transform .8s cubic-bezier(.2,.7,.3,1)}
+/* ---- проявление ---- */
+.rv{opacity:0;transform:translateY(36px);transition:opacity .85s cubic-bezier(.2,.7,.3,1),transform .85s cubic-bezier(.2,.7,.3,1)}
 .rv.in{opacity:1;transform:none}
-.rv.d1{transition-delay:.08s}.rv.d2{transition-delay:.16s}.rv.d3{transition-delay:.24s}
-.rv.d4{transition-delay:.32s}.rv.d5{transition-delay:.4s}.rv.d6{transition-delay:.48s}
+.rv.d1{transition-delay:.07s}.rv.d2{transition-delay:.14s}.rv.d3{transition-delay:.21s}
+.rv.d4{transition-delay:.28s}.rv.d5{transition-delay:.35s}.rv.d6{transition-delay:.42s}
+
+/* ---- заливка цветом ---- */
+.wash{
+  position:fixed;inset:0;z-index:95;pointer-events:none;opacity:.55;
+  transition:clip-path .75s cubic-bezier(.4,0,.2,1),opacity .55s ease .35s;
+}
 
 @media(prefers-reduced-motion:reduce){
-  *{animation:none!important;transition:none!important}
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  #splash{display:none}
+  h1 .row span{transform:none}
+  .rv{opacity:1;transform:none}
 }
 </style>
 </head>
 <body>
 
-<div class="glow g1"></div>
-<div class="glow g2"></div>
+<div id="splash"><div id="splash-word">Привет</div></div>
+<div id="seek"></div>
+<div class="aurora"><i></i><i></i><i></i></div>
 <canvas id="fx"></canvas>
+<div class="noise"></div>
+<div id="cursor"></div>
 
-<header>
-  <a class="logo" href="#">Fable Player</a>
-  <nav>
-    <a href="#feat" class="hide-m">Возможности</a>
-    <a href="#theme" class="hide-m">Тема</a>
-    <a href="https://github.com/GuardionSpend/fable-player" target="_blank" rel="noopener">GitHub</a>
-    <a href="https://www.rustore.ru/catalog/app/com.fable.player" target="_blank" rel="noopener" style="color:var(--ac)">RuStore</a>
-  </nav>
-</header>
+<nav>
+  <a class="logo" href="#">Fable</a>
+  <a class="lnk hide-m" href="#palette">Палитра</a>
+  <a class="lnk hide-m" href="#features">Функции</a>
+  <a class="lnk" href="https://github.com/GuardionSpend/fable-player" target="_blank" rel="noopener">GitHub</a>
+  <a class="get" href="#download">Скачать</a>
+</nav>
 
-<!-- ================= HERO ================= -->
-<div class="hero">
-  <div class="hero-txt">
-    <div class="chip rv">● Android · открытый код</div>
-    <h1 class="rv d1">Музыка, которая<br><span class="grad">красит всё вокруг</span></h1>
-    <p class="sub rv d2">
-      <b>Fable Player</b> — тёмный плеер для Android, который вытягивает цвет из обложки трека
-      и переливает им весь интерфейс: фон, кнопки, даже светящиеся огоньки.
-      Никакой рекламы и слежки — мы стремимся к минимальному размеру и максимальной красоте.
+<!-- ================== HERO ================== -->
+<header class="hero">
+  <div class="hero-copy">
+    <div class="chip"><span class="dot"></span>Android · RuStore · Открытый код</div>
+    <h1>
+      <span class="row"><span>Музыка,</span></span>
+      <span class="row"><span class="grad">которая красит</span></span>
+      <span class="row"><span>всё вокруг</span></span>
+    </h1>
+    <p class="sub">
+      <b>Fable Player</b> вытягивает цвет из обложки трека и переливает им весь
+      интерфейс — фон, кнопки, огоньки и кометы. Заиграл новый альбом —
+      <span class="acc">плеер стал другим</span>. Без рекламы. Навсегда.
     </p>
-    <div class="btns rv d3">
+    <div class="btns">
       <a class="btn primary" href="https://www.rustore.ru/catalog/app/com.fable.player" target="_blank" rel="noopener">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3v18l7-4 7 4V3z"/></svg>
         Установить из RuStore
       </a>
       <a class="btn ghost" href="https://github.com/GuardionSpend/fable-player/releases/latest/download/FablePlayer.apk">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg>
-        Скачать APK
-      </a>
-      <a class="btn ghost" href="https://github.com/GuardionSpend/fable-player" target="_blank" rel="noopener">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.58 2 12.26c0 4.53 2.87 8.37 6.84 9.73.5.09.68-.22.68-.49 0-.24-.01-.87-.01-1.7-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.5-1.11-1.5-.91-.63.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.89 1.57 2.34 1.12 2.91.85.09-.66.35-1.12.63-1.37-2.22-.26-4.56-1.14-4.56-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.7 0 0 .84-.28 2.75 1.05a9.36 9.36 0 0 1 5 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.4.2 2.44.1 2.7.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.8-4.57 5.06.36.32.68.94.68 1.9 0 1.37-.01 2.47-.01 2.81 0 .27.18.59.69.49A10.27 10.27 0 0 0 22 12.26C22 6.58 17.52 2 12 2z"/></svg>
-        Исходный код
+        APK
       </a>
       <a class="btn ghost" href="https://t.me/FablePlayer" target="_blank" rel="noopener">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9.04 15.51 8.9 19.1c.36 0 .52-.16.71-.35l1.7-1.63 3.53 2.59c.65.36 1.11.17 1.29-.6l2.34-10.97c.21-.96-.35-1.34-.98-1.1L4.27 12.1c-.94.36-.92.88-.16 1.12l3.52 1.1 8.17-5.15c.38-.23.73-.1.44.13l-7.2 6.21z"/></svg>
@@ -262,19 +476,23 @@ footer a:hover{color:var(--ac)}
     </div>
   </div>
 
-  <div class="phone-wrap rv d3">
-    <div class="phone">
-      <div class="notch"></div>
+  <div class="phone-scene">
+    <div class="phone-glow"></div>
+    <div class="phone" id="phone">
       <div class="scr">
-        <div class="cover"></div>
-        <div class="t1" id="mock-title">Midnight Drive</div>
-        <div class="t2" id="mock-artist">Fable Waves</div>
+        <div class="status"><span>21:07</span><span>✦ ✦ ✦</span></div>
+        <div class="cover-zone">
+          <div class="cover-glow"></div>
+          <div class="cover"><svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg></div>
+        </div>
+        <div class="t1" id="m-title">Midnight Drive</div>
+        <div class="t2" id="m-artist">Fable Waves</div>
         <div class="bar"><i></i></div>
         <div class="tt"><span>1:24</span><span>3:48</span></div>
         <div class="ctr">
           <svg viewBox="0 0 24 24"><path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>
           <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zM9.5 12l8.5 6V6z"/></svg>
-          <div class="play"><svg viewBox="0 0 24 24" width="26" height="26"><path d="M8 5v14l11-7z"/></svg></div>
+          <div class="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
           <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
           <svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
         </div>
@@ -282,72 +500,123 @@ footer a:hover{color:var(--ac)}
       </div>
     </div>
   </div>
-</div>
 
-<!-- ================= ПРЕИМУЩЕСТВА ================= -->
-<section id="feat">
-  <div class="sec-chip rv">Почему Fable</div>
-  <h2 class="rv d1">Маленький снаружи.<br>Большой внутри.</h2>
-  <p class="lead rv d2">Мы выбросили всё лишнее — библиотеки, рекламу, трекеры — и оставили только то,
-    что делает музыку приятнее. Поэтому плеер летает даже на старых телефонах.</p>
+  <div class="scroll-hint">листай<i></i></div>
+</header>
 
-  <div class="grid">
-    <div class="card rv d1">
-      <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 22C6.49 22 2 17.51 2 12S6.49 2 12 2s10 4.04 10 9c0 3.31-2.69 6-6 6h-1.77c-.28 0-.5.22-.5.5 0 .12.05.23.13.33.41.47.64 1.06.64 1.67A2.5 2.5 0 0 1 12 22zm0-18c-4.41 0-8 3.59-8 8s3.59 8 8 8c.28 0 .5-.22.5-.5a.54.54 0 0 0-.14-.35c-.41-.46-.63-1.05-.63-1.65a2.5 2.5 0 0 1 2.5-2.5H16c2.21 0 4-1.79 4-4 0-3.86-3.59-7-8-7z"/><circle cx="6.5" cy="11.5" r="1.5"/><circle cx="9.5" cy="7.5" r="1.5"/><circle cx="14.5" cy="7.5" r="1.5"/><circle cx="17.5" cy="11.5" r="1.5"/></svg></div>
-      <h3>Адаптивная тема</h3>
-      <p>Плеер вытягивает доминирующий цвет из обложки и плавно переливает им весь интерфейс — каждый альбом выглядит по-своему.</p>
+<!-- ================== БЕГУЩАЯ СТРОКА ================== -->
+<div class="ticker"><div class="tk" id="tk"></div></div>
+
+<!-- ================== ПАЛИТРА ================== -->
+<section id="palette">
+  <div class="lbl rv">01 · Палитра</div>
+  <h2 class="rv d1">Каждый альбом —<br><span class="grad">своя атмосфера</span></h2>
+  <p class="lead rv d2">Так работает адаптивная тема: заиграл трек — плеер вытянул цвет из обложки
+    и перекрасил всё. Нажми на любую «пластинку» — этот сайт сделает то же самое, прямо сейчас.</p>
+  <div class="albums rv d3" id="albums"></div>
+  <p class="pal-note rv d4">…в приложении цвет подбирается <b>автоматически</b> из любой обложки — даже твоей собственной.</p>
+</section>
+
+<!-- ================== ФУНКЦИИ ================== -->
+<section id="features">
+  <div class="lbl rv">02 · Функции</div>
+  <h2 class="rv d1">Маленький снаружи.<br><span class="grad">Огромный внутри</span></h2>
+  <p class="lead rv d2">Никаких тяжёлых библиотек, рекламы и трекеров — мы стремимся к минимальному
+    размеру. Всё, что внизу, — работает прямо на этой странице.</p>
+
+  <div class="bento">
+    <div class="card w2 rv">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 2 9.9 9.4 2 12l7.9 2.6L12 22l2.1-7.4L22 12l-7.9-2.6z"/></svg></div>
+      <h3>Огоньки · Звёзды · Кометы</h3>
+      <p>Живые эффекты на экране трека — в цвет обложки. Звёзды падают, кометы летят по диагонали
+        с хвостом. Переключи — фон этой страницы изменится.</p>
+      <div class="fx-pills">
+        <button class="fx-pill on" data-fx="0">Огоньки</button>
+        <button class="fx-pill" data-fx="1">Звёзды</button>
+        <button class="fx-pill" data-fx="2">Кометы</button>
+      </div>
     </div>
-    <div class="card rv d2">
+
+    <div class="card w2 rv d1">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 6h11v2H4zM4 10h11v2H4zM4 14h7v2H4zM15.5 13.5c-1.38 0-2.5 1.12-2.5 2.5s1.12 2.5 2.5 2.5 2.5-1.12 2.5-2.5V9h2V7h-3.5v6.05c-.3-.17-.64-.3-1-.3z"/></svg></div>
+      <h3>Тексты песен</h3>
+      <p>Вставь слова любимого трека — они всегда под рукой на экране плеера.</p>
+      <div class="kar" id="kar">
+        <div class="kl">Город засыпает — мы включаем свет,</div>
+        <div class="kl">в каждом цвете — отзвук, в каждом бите — след,</div>
+        <div class="kl">обложка расскажет, чем живёт трек —</div>
+        <div class="kl">Fable подхватит твой цвет.</div>
+      </div>
+    </div>
+
+    <div class="card rv">
       <div class="ico"><svg viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg></div>
-      <h3>Эквалайзер и скорость</h3>
-      <p>Восемь регуляторов: полосы частот, бас, объём и скорость 0.5x–2x. Настроил один раз — работает на всех треках.</p>
+      <h3>Эквалайзер</h3>
+      <p>Частоты, бас, объём — и скорость от 0.5x до 2x.</p>
+      <div class="eq-demo"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <span class="speed-pill">скорость 0.5x — 2x</span>
     </div>
-    <div class="card rv d3">
+
+    <div class="card w2 rv d1">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm5 11h-4v3h-2v-5h6z"/></svg></div>
+      <h3>Плеер знает тебя по имени</h3>
+      <p>Впиши имя в настройках — и при каждом входе Fable встретит тебя новой фразой. Попробуй:</p>
+      <div class="hi-row">
+        <input id="hi-name" type="text" maxlength="18" placeholder="Твоё имя…">
+        <button id="hi-go">Го</button>
+      </div>
+      <div class="hi-out" id="hi-out"></div>
+    </div>
+
+    <div class="card rv d2">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg></div>
+      <h3>4 иконки</h3>
+      <p>Меняй иконку приложения под настроение — тап сюда:</p>
+      <div class="icons-row" id="icons"></div>
+    </div>
+
+    <div class="card rv">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M9.5 2c-1.82 0-3.53.5-5 1.35 2.99 1.73 5 4.95 5 8.65s-2.01 6.92-5 8.65A9.97 9.97 0 0 0 9.5 22c5.52 0 10-4.48 10-10s-4.48-10-10-10z"/></svg></div>
+      <h3>Таймер сна</h3>
+      <p>15–90 минут или «до конца трека» — музыка выключится сама, когда ты уснёшь.</p>
+    </div>
+
+    <div class="card rv d1">
       <div class="ico"><svg viewBox="0 0 24 24"><path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/></svg></div>
-      <h3>Плейлисты с характером</h3>
-      <p>Создавайте плейлисты, давайте им имена и собственные обложки. Свайп вправо — и вся коллекция под рукой.</p>
+      <h3>Плейлисты с обложками</h3>
+      <p>Свои названия, свои обложки — и для плейлистов, и для треков без картинки.</p>
     </div>
-    <div class="card rv d4">
-      <div class="ico"><svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9z"/></svg></div>
-      <h3>Экран блокировки</h3>
-      <p>Управление прямо с экрана блокировки и шторки: обложка, перемотка, переключение треков — не открывая телефон.</p>
-    </div>
-    <div class="card rv d5">
+
+    <div class="card rv d2">
       <div class="ico"><svg viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM13 13v4h-2v-4H8l4-4 4 4h-3z"/></svg></div>
-      <h3>Лёгкость как принцип</h3>
-      <p>Никаких тяжёлых библиотек — чистый код. Мы стремимся к минимальному размеру: скачал за секунду, установил, слушаешь.</p>
+      <h3>Резервная копия</h3>
+      <p>Плейлисты, избранное, тексты, обложки и настройки — в один файл. Переустановил — вернул всё.</p>
     </div>
-    <div class="card rv d6">
-      <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 1 3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg></div>
-      <h3>Без рекламы и слежки</h3>
-      <p>Открытый исходный код на GitHub. Ни одного трекера, ни одного баннера — только вы и ваша музыка.</p>
+
+    <div class="card rv d3">
+      <div class="ico"><svg viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zM9 8V6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9z"/></svg></div>
+      <h3>Экран блокировки + виджет</h3>
+      <p>Управляй музыкой не открывая телефон — из шторки, с локскрина и виджета на рабочем столе.</p>
     </div>
   </div>
 </section>
 
-<!-- ================= ДЕМО ТЕМЫ ================= -->
-<section id="theme">
-  <div class="sec-chip rv">Попробуйте прямо здесь</div>
-  <h2 class="rv d1">Каждый альбом —<br>своя атмосфера</h2>
-  <p class="lead rv d2">Так это работает в приложении: заиграл новый трек — и весь интерфейс плавно
-    перетёк в его цвет. Нажмите на «обложку» — этот сайт сделает то же самое.</p>
-  <div class="palette rv d3">
-    <div class="dot on" style="background:#8c6fff" data-c="#8c6fff" data-t="Midnight Drive" data-a="Fable Waves"></div>
-    <div class="dot" style="background:#ff6f91" data-c="#ff6f91" data-t="Neon Heart" data-a="Crimson Echo"></div>
-    <div class="dot" style="background:#39c5bb" data-c="#39c5bb" data-t="Ocean Floor" data-a="Deep Current"></div>
-    <div class="dot" style="background:#ffb454" data-c="#ffb454" data-t="Golden Hour" data-a="Sunset Tape"></div>
-    <div class="dot" style="background:#7ddf64" data-c="#7ddf64" data-t="Forest Pulse" data-a="Mossy Beats"></div>
-    <div class="dot" style="background:#5aa7ff" data-c="#5aa7ff" data-t="Sky Línes" data-a="Cloud Nine"></div>
-    <div class="pal-hint">…а в плеере цвет подбирается автоматически из любой обложки.</div>
-  </div>
-</section>
-
-<!-- ================= CTA ================= -->
+<!-- ================== ЦИФРЫ ================== -->
 <section>
+  <div class="stats">
+    <div class="stat rv"><div class="n">0</div><div class="d">рекламы</div></div>
+    <div class="stat rv d1"><div class="n">100%</div><div class="d">открытый код</div></div>
+    <div class="stat rv d2"><div class="n">2</div><div class="d">языка · RU / EN</div></div>
+    <div class="stat rv d3"><div class="n">∞</div><div class="d">бесплатно</div></div>
+  </div>
+</section>
+
+<!-- ================== CTA ================== -->
+<section id="download">
   <div class="cta rv">
-    <div class="sec-chip">Бесплатно · без регистрации</div>
-    <h2>Заберите свою музыку<br>в новые цвета</h2>
-    <p class="lead" style="margin:0 auto">Android 7.0 и новее. Установка за пару секунд.</p>
+    <div class="lbl" style="justify-content:center">03 · Скачать</div>
+    <h2>Готов раскрасить<br><span class="grad">свою музыку?</span></h2>
+    <p class="lead">Android 7.0+ · установка за пару секунд · без регистрации</p>
     <div class="btns">
       <a class="btn primary" href="https://www.rustore.ru/catalog/app/com.fable.player" target="_blank" rel="noopener">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3v18l7-4 7 4V3z"/></svg>
@@ -357,97 +626,299 @@ footer a:hover{color:var(--ac)}
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 20h14v-2H5v2zM19 9h-4V3H9v6H5l7 7 7-7z"/></svg>
         Скачать APK
       </a>
+      <a class="btn ghost" href="https://github.com/GuardionSpend/fable-player/releases" target="_blank" rel="noopener">Все версии</a>
     </div>
   </div>
 </section>
 
+<!-- ================== ФУТЕР ================== -->
 <footer>
-  <div>
-    <div class="mini-logo">Fable Player</div>
-    <div class="who" style="margin-top:6px">Сделано с любовью к музыке.</div>
+  <div class="giant">FABLE</div>
+  <div class="foot">
+    <div class="who">
+      <div class="h">Fable Player</div>
+      Музыка, которая красит всё вокруг.<br>Сделано с любовью к музыке.
+    </div>
+    <div class="cols">
+      <div class="who">
+        <div class="h">Проект</div>
+        <a href="https://github.com/GuardionSpend/fable-player" target="_blank" rel="noopener">GitHub</a><br>
+        <a href="https://github.com/GuardionSpend/fable-player/releases" target="_blank" rel="noopener">Релизы</a><br>
+        <a href="https://www.rustore.ru/catalog/app/com.fable.player" target="_blank" rel="noopener">RuStore</a>
+      </div>
+      <div class="who">
+        <div class="h">Люди</div>
+        Разработчик — <a href="https://github.com/GuardionSpend" target="_blank" rel="noopener">GuardionSpend</a><br>
+        Контрибьютор — <a href="https://github.com/NickIBrody" target="_blank" rel="noopener">NickIBrody</a><br>
+        <a href="https://t.me/FablePlayer" target="_blank" rel="noopener">Telegram</a>
+      </div>
+    </div>
   </div>
-  <div class="who">
-    Разработчик — <a href="https://github.com/GuardionSpend" target="_blank" rel="noopener">GuardionSpend</a>
-    · <a href="https://t.me/FablePlayer" target="_blank" rel="noopener">Telegram</a><br>
-    Контрибьютор — <a href="https://github.com/NickIBrody" target="_blank" rel="noopener">NickIBrody</a>
-  </div>
+  <div class="copy">Fable Player · <a href="classic.html">классическая версия сайта</a></div>
 </footer>
 
 <script>
-/* ---------- частицы-огоньки (как в приложении) ---------- */
+/* ================== ПАЛИТРЫ ================== */
+const PAL = [
+  {a:'#8C6FFF', b:'#4C1D95', t:'Midnight Drive', ar:'Fable Waves'},
+  {a:'#FF5470', b:'#7F1D1D', t:'Neon Heart',     ar:'Crimson Echo'},
+  {a:'#2DD4BF', b:'#134E4A', t:'Ocean Floor',    ar:'Deep Current'},
+  {a:'#FFB454', b:'#7C2D12', t:'Golden Hour',    ar:'Sunset Tape'},
+  {a:'#7DDF64', b:'#14532D', t:'Forest Pulse',   ar:'Mossy Beats'},
+  {a:'#5AA7FF', b:'#1E3A8A', t:'Skylines',       ar:'Cloud Nine'},
+];
+let cur = 0, userPicked = false;
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function h2r(h){return{r:parseInt(h.slice(1,3),16),g:parseInt(h.slice(3,5),16),b:parseInt(h.slice(5,7),16)}}
+let AC = h2r(PAL[0].a);
+
+function applyVars(p){
+  const c = h2r(p.a); AC = c;
+  const s = document.documentElement.style;
+  s.setProperty('--ac', p.a);
+  s.setProperty('--ac-deep', p.b);
+  s.setProperty('--ac-soft', `rgba(${c.r},${c.g},${c.b},.14)`);
+  s.setProperty('--ac-glow', `rgba(${c.r},${c.g},${c.b},.55)`);
+  document.getElementById('m-title').textContent = p.t;
+  document.getElementById('m-artist').textContent = p.ar;
+  document.querySelectorAll('.alb').forEach((el,i)=>el.classList.toggle('on', i===cur));
+}
+
+/* заливка цветом от точки клика */
+function wash(p, x, y){
+  if (reduced){ applyVars(p); return; }
+  const o = document.createElement('div');
+  o.className = 'wash';
+  o.style.background = `radial-gradient(circle at ${x}px ${y}px, ${p.a}, ${p.b} 45%, transparent 72%)`;
+  o.style.clipPath = `circle(0px at ${x}px ${y}px)`;
+  document.body.appendChild(o);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    o.style.clipPath = `circle(150vmax at ${x}px ${y}px)`;
+  }));
+  setTimeout(()=>applyVars(p), 320);
+  setTimeout(()=>{ o.style.opacity = 0; }, 600);
+  setTimeout(()=>o.remove(), 1300);
+}
+function setAccent(i, x, y){
+  cur = i;
+  wash(PAL[i], x ?? innerWidth/2, y ?? innerHeight/2);
+}
+
+/* ================== АЛЬБОМЫ ================== */
+const albums = document.getElementById('albums');
+PAL.forEach((p,i)=>{
+  const el = document.createElement('div');
+  el.className = 'alb' + (i===0 ? ' on' : '');
+  el.innerHTML = `<div class="art" style="background:linear-gradient(135deg,${p.a},${p.b})">
+      <svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
+    </div><div class="nm">${p.t}</div><div class="ar">${p.ar}</div>`;
+  el.addEventListener('click', e=>{ userPicked = true; setAccent(i, e.clientX, e.clientY); });
+  albums.appendChild(el);
+});
+/* авто-перелив, пока гость не выбрал сам */
+setInterval(()=>{
+  if (userPicked || document.hidden) return;
+  setAccent((cur+1)%PAL.length);
+}, 6500);
+
+/* ================== БЕГУЩАЯ СТРОКА ================== */
+const items = ['Без рекламы','Открытый код','Адаптивная тема','Тексты песен','Эквалайзер',
+  'Плейлисты','Таймер сна','Виджет','Кометы и звёзды','RU / EN','Бесплатно навсегда'];
+document.getElementById('tk').innerHTML =
+  Array(2).fill(items.map(i=>`<span>${i}</span><span><b>✦</b></span>`).join('')).join('');
+
+/* ================== ЗАСТАВКА ================== */
+const splash = document.getElementById('splash');
+if (!reduced){
+  const words = ['Привет 👋','Что будем слушать сегодня?','Fable Player'];
+  const sw = document.getElementById('splash-word');
+  let wi = 0;
+  const iv = setInterval(()=>{
+    wi++;
+    if (wi < words.length){ sw.textContent = words[wi]; sw.style.animation='none'; void sw.offsetWidth; sw.style.animation=''; }
+    else { clearInterval(iv); splash.classList.add('off'); setTimeout(()=>splash.remove(), 800); }
+  }, 480);
+  splash.addEventListener('click', ()=>{ clearInterval(iv); splash.classList.add('off'); setTimeout(()=>splash.remove(), 800); });
+} else splash.remove();
+
+/* ================== ЧАСТИЦЫ (движок из приложения) ================== */
 const cv = document.getElementById('fx'), ctx = cv.getContext('2d');
-let W, H, ps = [];
-let AC = {r:140, g:111, b:255};
+let W, H, DPR = 1;
 function resize(){ W = cv.width = innerWidth; H = cv.height = innerHeight; }
 addEventListener('resize', resize); resize();
-function mk(any){
-  return { x: Math.random()*W, y: any ? Math.random()*H : H+20,
-    r: 1+Math.random()*2.4, sp: .15+Math.random()*.45,
-    ph: Math.random()*6.28, dr: 8+Math.random()*26, tw: .6+Math.random()*1.6 };
+let fxMode = 0; // 0 огоньки, 1 звёзды, 2 кометы
+let ps = [];
+function spawn(p, anywhere){
+  p.ph = Math.random()*6.283; p.tw = .6 + Math.random()*1.6;
+  if (fxMode === 1){ // звёзды — падают
+    p.x = Math.random()*W; p.y = anywhere ? Math.random()*H : -20;
+    p.r = .9 + Math.random()*2; p.sp = .25 + Math.random()*.75; p.dr = 1.5 + Math.random()*5;
+  } else if (fxMode === 2){ // кометы — по диагонали ↘
+    if (anywhere){ p.x = Math.random()*W; p.y = Math.random()*H*.7; }
+    else if (Math.random() < .5){ p.x = -(20+Math.random()*140); p.y = Math.random()*H*.5; }
+    else { p.x = Math.random()*W*.6; p.y = -(20+Math.random()*90); }
+    p.r = 1.3 + Math.random()*1.4; p.sp = 1.7 + Math.random()*2.4; p.dr = p.sp*(.45+Math.random()*.25);
+  } else { // огоньки — всплывают
+    p.x = Math.random()*W; p.y = anywhere ? Math.random()*H : H+30;
+    p.r = 1.1 + Math.random()*2.4; p.sp = .15 + Math.random()*.5; p.dr = 2 + Math.random()*9;
+  }
 }
-for(let i=0;i<42;i++) ps.push(mk(true));
+function fill(){ ps = []; const n = fxMode===2 ? 10 : 44; for(let i=0;i<n;i++){ const p={}; spawn(p,true); ps.push(p); } }
+fill();
+function setFx(m){ fxMode = m; fill();
+  document.querySelectorAll('.fx-pill').forEach(b=>b.classList.toggle('on', +b.dataset.fx===m));
+}
+document.querySelectorAll('.fx-pill').forEach(b=>b.addEventListener('click',()=>setFx(+b.dataset.fx)));
+
 function tick(t){
   ctx.clearRect(0,0,W,H);
   const s = t/1000;
-  for(const p of ps){
-    p.y -= p.sp;
-    if(p.y < -30) Object.assign(p, mk(false));
-    const x = p.x + Math.sin(s*.6+p.ph)*p.dr;
-    const a = .3+.7*(.5+.5*Math.sin(s*p.tw*2+p.ph));
-    ctx.beginPath();
-    ctx.fillStyle = `rgba(${AC.r},${AC.g},${AC.b},${.12*a})`;
-    ctx.arc(x,p.y,p.r*3.4,0,7); ctx.fill();
-    ctx.beginPath();
-    ctx.fillStyle = `rgba(255,255,255,${.5*a})`;
-    ctx.arc(x,p.y,p.r,0,7); ctx.fill();
+  const core = `255,255,255`;
+  for (const p of ps){
+    const a = .3 + .7*(.5 + .5*Math.sin(s*p.tw*2 + p.ph));
+    if (fxMode === 1){ // звёзды
+      p.y += p.sp;
+      if (p.y > H+40) spawn(p,false);
+      const x = p.x + Math.sin(s*.4+p.ph)*p.dr;
+      ctx.fillStyle = `rgba(${AC.r},${AC.g},${AC.b},${.11*a})`;
+      ctx.beginPath(); ctx.arc(x,p.y,p.r*3,0,7); ctx.fill();
+      ctx.fillStyle = `rgba(${core},${.7*a})`;
+      ctx.beginPath(); ctx.arc(x,p.y,p.r,0,7); ctx.fill();
+      ctx.fillStyle = `rgba(${core},${.4*a})`;
+      const l = p.r*2.6;
+      ctx.fillRect(x-l, p.y-p.r*.2, l*2, p.r*.4);
+      ctx.fillRect(x-p.r*.2, p.y-l, p.r*.4, l*2);
+    } else if (fxMode === 2){ // кометы
+      p.x += p.sp; p.y += p.dr;
+      if (p.x > W+90 || p.y > H+90) spawn(p,false);
+      const segs = 11, sx = p.sp*2.3, sy = p.dr*2.3;
+      for (let k=1;k<=segs;k++){
+        const ta = a*(1-k/(segs+1));
+        ctx.fillStyle = `rgba(${AC.r},${AC.g},${AC.b},${.3*ta})`;
+        ctx.beginPath(); ctx.arc(p.x-k*sx, p.y-k*sy, p.r*(1-k*.055), 0, 7); ctx.fill();
+      }
+      ctx.fillStyle = `rgba(${core},${.14*a})`;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r*2.6,0,7); ctx.fill();
+      ctx.fillStyle = `rgba(${core},${.9*a})`;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,7); ctx.fill();
+    } else { // огоньки
+      p.y -= p.sp;
+      if (p.y < -40) spawn(p,false);
+      const x = p.x + Math.sin(s*.6+p.ph)*p.dr;
+      ctx.fillStyle = `rgba(${AC.r},${AC.g},${AC.b},${.13*a})`;
+      ctx.beginPath(); ctx.arc(x,p.y,p.r*3.4,0,7); ctx.fill();
+      ctx.fillStyle = `rgba(${core},${.55*a})`;
+      ctx.beginPath(); ctx.arc(x,p.y,p.r,0,7); ctx.fill();
+    }
   }
   requestAnimationFrame(tick);
 }
-requestAnimationFrame(tick);
+if (!reduced) requestAnimationFrame(tick);
 
-/* ---------- смена акцента (адаптивная тема) ---------- */
-function hex2rgb(h){ return {r:parseInt(h.slice(1,3),16), g:parseInt(h.slice(3,5),16), b:parseInt(h.slice(5,7),16)}; }
-function setAccent(hex, title, artist){
-  const c = hex2rgb(hex);
-  AC = c;
-  const root = document.documentElement.style;
-  root.setProperty('--ac', hex);
-  root.setProperty('--ac-soft', `rgba(${c.r},${c.g},${c.b},.16)`);
-  if(title){ document.getElementById('mock-title').textContent = title;
-             document.getElementById('mock-artist').textContent = artist; }
+/* ================== КАРАОКЕ ================== */
+const kls = document.querySelectorAll('#kar .kl');
+let ki = 0;
+setInterval(()=>{
+  if (document.hidden) return;
+  kls.forEach((el,i)=>el.classList.toggle('on', i===ki));
+  ki = (ki+1)%kls.length;
+}, 1500);
+
+/* ================== ПРИВЕТСТВИЕ ================== */
+const HI = [
+  'Что будем слушать сегодня, %s?',
+  'С возвращением, %s!',
+  'Привет, %s! Погнали 🎧',
+  'Музыка уже ждёт, %s',
+  'Хорошего звучания, %s!',
+  '%s, отличный день для музыки'
+];
+let lastHi = -1;
+function greet(){
+  const name = document.getElementById('hi-name').value.trim() || 'друг';
+  let i; do { i = Math.floor(Math.random()*HI.length); } while (i === lastHi);
+  lastHi = i;
+  const out = document.getElementById('hi-out');
+  out.textContent = HI[i].replace('%s', name);
+  out.classList.remove('pop'); void out.offsetWidth; out.classList.add('pop');
 }
-const dots = [...document.querySelectorAll('.dot')];
-dots.forEach(d => d.addEventListener('click', () => {
-  dots.forEach(x => x.classList.remove('on'));
-  d.classList.add('on');
-  setAccent(d.dataset.c, d.dataset.t, d.dataset.a);
-}));
-/* лёгкая авто-смена, пока пользователь не выбрал сам */
-let userPicked = false;
-dots.forEach(d => d.addEventListener('click', () => userPicked = true));
-let autoI = 0;
-setInterval(() => {
-  if(userPicked) return;
-  autoI = (autoI+1) % dots.length;
-  dots.forEach(x => x.classList.remove('on'));
-  dots[autoI].classList.add('on');
-  const d = dots[autoI];
-  setAccent(d.dataset.c, d.dataset.t, d.dataset.a);
-}, 5000);
+document.getElementById('hi-go').addEventListener('click', greet);
+document.getElementById('hi-name').addEventListener('keydown', e=>{ if(e.key==='Enter') greet(); });
 
-/* ---------- появление при скролле ---------- */
-const io = new IntersectionObserver(es => es.forEach(e => {
-  if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
+/* ================== ИКОНКИ ================== */
+const ICONS = [
+  {bg:'#14101F', note:'#8C6FFF', lines:'#C9B8FF', pal:0},
+  {bg:'#0A0A0A', note:'#22C55E', lines:'#86EFAC', pal:4},
+  {bg:'#0A0A0A', note:'#EF4444', lines:'#FCA5A5', pal:1},
+  {bg:'#1D4ED8', note:'#FFFFFF', lines:'#BFDBFE', pal:5},
+];
+const iconsRow = document.getElementById('icons');
+ICONS.forEach(ic=>{
+  const d = document.createElement('div');
+  d.className = 'aicon';
+  d.style.background = ic.bg;
+  d.innerHTML = `<svg viewBox="0 0 108 108">
+    <path fill="${ic.note}" d="M66 24v37.1c-2.4-1.4-5.1-2.1-8-2.1-8.8 0-16 7.2-16 16s7.2 16 16 16 16-7.2 16-16V40h12V24H66z"/>
+    <path fill="${ic.lines}" d="M30 34h18v6H30zM30 46h14v6H30zM30 58h10v6H30z"/></svg>`;
+  d.addEventListener('click', e=>{ userPicked = true; setAccent(ic.pal, e.clientX, e.clientY); });
+  iconsRow.appendChild(d);
+});
+
+/* ================== 3D-НАКЛОН ТЕЛЕФОНА ================== */
+const phone = document.getElementById('phone');
+let rx = 0, ry = 0, trx = 0, try_ = 0;
+if (!reduced && matchMedia('(pointer:fine)').matches){
+  document.querySelector('.hero').addEventListener('mousemove', e=>{
+    const r = phone.getBoundingClientRect();
+    const cx = r.left + r.width/2, cy = r.top + r.height/2;
+    try_ = Math.max(-10, Math.min(10, (e.clientX-cx)/28));
+    trx  = Math.max(-10, Math.min(10, -(e.clientY-cy)/28));
+  });
+  document.querySelector('.hero').addEventListener('mouseleave', ()=>{ trx = 0; try_ = 0; });
+  (function tilt(){
+    rx += (trx-rx)*.08; ry += (try_-ry)*.08;
+    phone.style.transform = `rotateX(${rx}deg) rotateY(${ry}deg)`;
+    requestAnimationFrame(tilt);
+  })();
+}
+
+/* ================== КУРСОР-СВЕЧЕНИЕ ================== */
+const cursor = document.getElementById('cursor');
+if (matchMedia('(pointer:fine)').matches){
+  addEventListener('mousemove', e=>{
+    cursor.style.opacity = .7;
+    cursor.style.left = e.clientX+'px';
+    cursor.style.top = e.clientY+'px';
+  });
+}
+
+/* ================== СИКБАР-ПРОГРЕСС СТРАНИЦЫ ================== */
+addEventListener('scroll', ()=>{
+  const h = document.documentElement;
+  document.getElementById('seek').style.width =
+    (h.scrollTop / (h.scrollHeight - h.clientHeight) * 100) + '%';
+}, {passive:true});
+
+/* ================== ПРОЯВЛЕНИЕ ПРИ СКРОЛЛЕ ================== */
+const io = new IntersectionObserver(es=>es.forEach(e=>{
+  if (e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target); }
 }), {threshold:.12});
-document.querySelectorAll('.rv').forEach(el => io.observe(el));
+document.querySelectorAll('.rv').forEach(el=>io.observe(el));
 
-/* ---------- подсветка карточек за курсором ---------- */
-document.querySelectorAll('.card').forEach(c => {
-  c.addEventListener('mousemove', e => {
+/* ================== ПОДСВЕТКА КАРТОЧЕК ================== */
+document.querySelectorAll('.card').forEach(c=>{
+  c.addEventListener('mousemove', e=>{
     const r = c.getBoundingClientRect();
     c.style.setProperty('--mx', (e.clientX-r.left)+'px');
     c.style.setProperty('--my', (e.clientY-r.top)+'px');
   });
+});
+
+/* ================== ВКЛАДКА КАК ПЛЕЕР ================== */
+const baseTitle = document.title;
+document.addEventListener('visibilitychange', ()=>{
+  document.title = document.hidden ? '⏸ На паузе — Fable Player' : baseTitle;
 });
 </script>
 </body>
